@@ -1,0 +1,25 @@
+{
+  "id": "./index.html",
+  "name": "简账 · 私人多账户财务管理",
+  "short_name": "简账",
+  "description": "简账 v3.3：账户分组、资产与负债、独立统计开关、账户图标、MoneyWiz 导入、离线记账",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f7fb",
+  "theme_color": "#f6f7fb",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
