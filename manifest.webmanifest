@@ -2,7 +2,7 @@
   "id": "./index.html",
   "name": "简账 · 私人多账户财务管理",
   "short_name": "简账",
-  "description": "简账 v3.3：账户分组、资产与负债、独立统计开关、账户图标、MoneyWiz 导入、离线记账",
+  "description": "简账 v3.5：交易详情修改、复制、退款及删除；账户调整余额与删除；MoneyWiz CSV 导入和离线账本",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
