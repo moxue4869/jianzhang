@@ -323,7 +323,7 @@ const fmt=(c,currency='CNY',signed=false)=>{let n=Number(c)/100;let v=Math.abs(n
 const cents=s=>{let v=Number(String(s??'').trim());if(!Number.isFinite(v)||Math.abs(v)>1e12)throw Error('金额无效或过大');return Math.round(v*100)};
 const initial=()=>({schema:4,accountGroups:[],accounts:[],transactions:[],customCategories:[],creditPools:[],groupOrder:{},categoryOrder:[],hiddenCategories:[],fxRates:{CNY:1},rewardRules:[],repaymentLogs:{},rewardHistory:[],createdAt:new Date().toISOString()});
 const blankFilter=()=>({accounts:[],types:[],categories:[],tags:[],q:'',month:'',amountOp:'any',amountValue:'',dateOp:'any',dateStart:'',dateEnd:'',advanced:false});
-let db=null, storage='idb', state=initial(), page='accounts', accountDetail='', editing='', editKind='', txType='expense', filter=blankFilter(), ledgerScope='', accountSearch='', reportDateStart=curMonth()+'-01', reportDateEnd=now(), csvContext=null, toastTimer=0, creditPeriodMode='billing', creditPeriodCount=3, isForceModal=false, ledgerBatchMode=false, selectedTxIds=[];
+let db=null, storage='idb', state=initial(), page='accounts', accountDetail='', editing='', editKind='', txType='expense', filter=blankFilter(), ledgerScope='', accountSearch='', reportDateStart=curMonth()+'-01', reportDateEnd=now(), csvContext=null, toastTimer=0, creditPeriodMode='billing', creditPeriodCount=3, isForceModal=false, ledgerBatchMode=false, selectedTxIds=[], accountsScrollPos=0;
 function t(msg){const x=$('toast');x.textContent=msg;x.classList.add('on');clearTimeout(toastTimer);toastTimer=setTimeout(()=>x.classList.remove('on'),3500)}
 function openDB(){return new Promise((res,rej)=>{if(!window.indexedDB)return rej(Error('当前环境不支持IndexedDB'));const r=indexedDB.open('jianzhao-ledger-v2',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onerror=()=>rej(r.error);r.onsuccess=()=>res(r.result)})}
 function idbGet(key){return new Promise((res,rej)=>{const r=db.transaction('kv','readonly').objectStore('kv').get(key);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
@@ -570,7 +570,7 @@ const rewardBlock=rewardRulesFor(a.id).map(r=>{
  const pct=Math.min(100,Math.round(net/maxTarget*100));
  const marks=r.targets.map(t=>`<span style="position:absolute;left:${Math.min(100,t.amount/maxTarget*100)}%;top:-1px;width:2px;height:12px;background:#fff;box-shadow:0 0 3px rgba(0,0,0,0.4);z-index:2"></span>`).join('');
  const rows=r.targets.map((t,i)=>`<div class="kvline" style="${i===r.targets.length-1?'border-bottom:0':''}"><span>${E(t.label||('满'+fmt(t.amount,a.currency)))}</span><b class="${net>=t.amount?'positive':''}">${net>=t.amount?'✓ 已达成':'还差 '+fmt(t.amount-net,a.currency)}</b></div>`).join('');
- return `<div class="card settingsCard" style="margin-top:12px"><div class="sectionTitle" style="margin-top:0"><h2>${E(r.name)}</h2><span class="subtle">${r.cycle==='monthly'?'每月循环':'单次活动'}</span></div><div class="subtle" style="margin-bottom:10px">当前周期：${E(period.label)}</div><div class="barRow"><div class="barName"><span>已消费（扣退款及返现）</span><b>${fmt(net,a.currency)} / ${fmt(maxTarget,a.currency)}</b></div><div class="barTrack" style="position:relative">${marks}<div class="barFill" style="width:${pct}%"></div></div></div>${rows}<div class="settingsActions"><button class="btn tiny" data-act="editRewardRule" data-id="${E(r.id)}">编辑</button><button class="btn tiny warn" data-act="deleteRewardRule" data-id="${E(r.id)}">删除</button></div>${rewardHistoryBlock(r.id)}</div>`
+ return `<div class="card settingsCard" style="margin-top:12px"><div class="sectionTitle" style="margin-top:0"><h2>${E(r.name)}</h2><span class="subtle">${r.cycle==='monthly'?'每月循环':'单次活动'}</span></div><div class="subtle" style="margin-bottom:10px">当前周期：${E(period.label)}</div><div class="barRow"><div class="barName"><span>已消费（扣退款及返现）</span><b>${fmt(net,a.currency)} / ${fmt(maxTarget,a.currency)}</b></div><div class="barTrack" style="position:relative">${marks}<div class="barFill" style="width:${pct}%"></div></div></div>${rows}<div class="settingsActions"><button class="btn tiny" data-act="editRewardRule" data-id="${E(r.id)}">编辑</button><button class="btn tiny warn" data-act="deleteRewardRule" data-id="${E(r.id)}">删除</button></div>${r.cycle === 'monthly' ? rewardHistoryBlock(r.id) : ''}</div>`
 }).join('');
 
 let cc=a.kind==='credit'?`<details class="card" style="margin-top:14px; padding:0; border-radius:21px; overflow:hidden; border:1px solid #e8ebf0; box-shadow:0 2px 12px #152b5107;"><summary style="padding:14px 18px; background:#fff; display:flex; align-items:center; justify-content:space-between; cursor:pointer; font-weight:bold; color:#263344; font-size:15px; outline:none; list-style-type: none !important;"><span>信用卡额度</span><div style="display:flex; align-items:center; gap:10px;"><span style="font-size:12px; color:#718196; font-weight:normal; display:flex; flex-direction:column; align-items:flex-end; line-height:1.3;">已用 ${fmt(creditUsed(a),a.currency)}${isFinite(creditAvailable(a))?'<br>可用 '+fmt(creditAvailable(a),a.currency):''}</span><span style="font-size:10px; color:#a0a9b7;">▼</span></div></summary><div style="padding: 0 18px 18px 18px; border-top: 1px solid #eef0f4; background:#fff;">
@@ -580,7 +580,33 @@ let cc=a.kind==='credit'?`<details class="card" style="margin-top:14px; padding:
 ${p?`<div class="kvline"><span>额度池可用</span><b>${fmt(p.limit-poolUsed(p),p.currency)}</b>${p.currency!==a.currency?`<small class="positive"> (按汇率折算)</small>`:''}</div>`:''}
 ${a.cardLimit&&p?`<div class="kvline"><span>单卡信用额度</span><b>${fmt(a.cardLimit,a.currency)}</b></div>`:''}
 ${(a.cardLimit||p)?`<div class="kvline"><span>当前可用额度</span><b>${fmt(creditAvailable(a),a.currency)}</b></div>`:''}
-<div class="kvline"><span>账单日 / 还款日</span><b>每月${a.billDay||5}日 / ${a.payDayType==='offset'?'账单日后'+a.payDayOffset+'天':a.payDay+'日'}</b></div>
+<div class="kvline"><span>账单日 / 还款日</span><b>每月${a.billDay||5}日 / ${(()=>{
+  if(a.payDayType==='offset'){
+    const today = new Date(now()+'T12:00:00');
+    let bDay = new Date(today.getFullYear(), today.getMonth(), Math.min(a.billDay||5, monthLastDay(today.getFullYear(), today.getMonth()+1)));
+    
+    // 如果今天还没到本月的账单日，那上一期账单日在上个月
+    if(today < bDay) {
+      bDay.setMonth(bDay.getMonth() - 1);
+    }
+    
+    // 计算还款日 = 账单日 + 宽限天数
+    let dueDate = new Date(bDay.getTime());
+    dueDate.setDate(dueDate.getDate() + (a.payDayOffset||20));
+    
+    // 如果算出来的还款日已经小于今天（说明已经逾期了），就顺延到下一期账单的还款日
+    if(dueDate < today) {
+      let nextMonth = bDay.getMonth() + 1;
+      let nextYear = bDay.getFullYear();
+      bDay = new Date(nextYear, nextMonth, Math.min(a.billDay||5, monthLastDay(nextYear, nextMonth+1)));
+      
+      dueDate = new Date(bDay.getTime());
+      dueDate.setDate(dueDate.getDate() + (a.payDayOffset||20));
+    }
+    return `${dueDate.getMonth()+1}月${dueDate.getDate()}日`;
+  }
+  return a.payDay+'日';
+})()}</b></div>
 </div></details>`:'';
 return `<div class="backRow"><button class="linkStyle" data-act="backAccounts">${ic('left')} 返回账户</button><button class="btn tiny soft" data-act="accountActions" data-id="${E(a.id)}"> 账户操作</button></div><div class="detailHead v41DetailHead" data-v41-theme="${E(a.id)}" style="${v41GradientStyle(a)}"><div class="detailIdentity"><span class="accountIcon ${colors(a.id)}">${accountIconContent(a)}</span><div class="name">${E(a.name)}</div></div><div class="subtle" style="margin-top:5px">${E(a.currency)} · ${E(a.kind==='credit'?'信用卡':a.kind==='wallet'?'钱包':a.kind==='loan'?'贷款':'个人账户')}${a.includeInWealth===false?' · 不计入资产负债统计':''}</div><div class="balance">${fmt(b,a.currency)}</div><div class="miniStats"><span>本月收入 <b class="positive">+${fmt(inc,a.currency)}</b></span><span>本月支出 <b>${fmt(out,a.currency)}</b></span></div></div><div class="toolbar accountToolbar">
 <button class="btn soft" data-act="newTx" data-id="${E(a.id)}">记一笔</button>
@@ -914,8 +940,19 @@ renderAccountDetail = function(){
 
 function rewardHistoryBlock(ruleId){
   const h = state.rewardHistory.filter(x=>x.ruleId===ruleId).sort((a,b)=>b.end.localeCompare(a.end));
-  if(!h.length) return '';
-  return `<details class="morePeriods" style="margin-top:10px;margin-bottom:0"><summary><span class="when-closed">查看历史达成记录</span><span class="when-open">收起历史</span></summary><div style="padding-top:10px">${h.map(x=>`<div class="kvline" style="border-bottom:1px dashed #eef0f4;padding:8px 0"><span>${E(x.start)} ~ ${E(x.end)}</span><b style="font-size:12px;color:${x.achieved.length?'#d94b4b':'#8794a7'}">${x.achieved.length?'已达成 '+x.achieved.join('、'):'未达标'}</b></div>`).join('')}</div></details>`;
+  return `<details class="morePeriods" style="margin-top:10px;margin-bottom:0">
+    <summary><span class="when-closed">查看历史达成记录</span><span class="when-open">收起历史</span></summary>
+    <div style="padding-top:10px">
+      ${h.length ? h.map(x=>`
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; border-bottom:1px dashed #eef0f4; padding:10px 0;">
+          <span style="color:#788492; font-size:12px; flex-shrink:0;">${E(x.start)} ~ ${E(x.end)}</span>
+          <b style="flex:1; text-align:right; font-size:12px; color:${x.achieved.length?'#d94b4b':'#8794a7'}; word-break:break-all; line-height:1.5;">
+            ${x.achieved.length?'已达成 '+x.achieved.join('、'):'未达标'}
+          </b>
+        </div>
+      `).join('') : '<div class="empty" style="padding:10px 0;font-size:12px">暂无历史记录</div>'}
+    </div>
+  </details>`;
 }
 function rewardRuleForm(id='',accountId=''){
  const r=(state.rewardRules||[]).find(x=>x.id===id);
@@ -1225,7 +1262,21 @@ if(name==='batchUpdateCategory'){
   if(name==='renameGroup'){const oldName=id;const next=prompt('将该分组重命名为：',oldName);if(next===null)return;const nextName=next.trim();if(!nextName)throw Error('分组名称不能为空');if(nextName.length>80)throw Error('分组名称最多80字');if(nextName!==oldName){const count=state.accounts.filter(a=>a.group===oldName).length;for(const a of state.accounts)if(a.group===oldName)a.group=nextName;for(const c of Object.keys(state.groupOrder||{})){state.groupOrder[c]=[...new Set((state.groupOrder[c]||[]).map(g=>g===oldName?nextName:g))]}await save();render();t('已更新 '+count+' 个账户的分组')}manageGroups();return}
   if(name==='ungroupGroup'){const count=state.accounts.filter(a=>a.group===id).length;if(!confirm(`将「${id}」中的 ${count} 个账户移至“未分组”？不会删除账户或交易。`))return;for(const a of state.accounts)if(a.group===id)a.group='';await save();render();manageGroups();t('已取消分组');return}
   if(name==='newAccount'){newAccount();return}if(name==='editAccount'){newAccount(id);return}if(name==='newPool'){poolForm();return}if(name==='editPool'){poolForm(id);return}if(name==='fxForm'){fxForm();return} 
-if(name==='backAccounts'){accountDetail='';render();return}if(name==='openAccount'){accountDetail=id;page='accounts';render();window.scrollTo(0,0);return}
+if(name==='backAccounts'){
+  accountDetail='';
+  render();
+  // 延迟一丁点时间，等待 DOM 渲染完毕后恢复滚动位置
+  setTimeout(()=>window.scrollTo({top:accountsScrollPos,behavior:'instant'}),0);
+  return;
+}
+if(name==='openAccount'){
+  accountsScrollPos=window.scrollY; // 记录点击进入前的 Y 坐标
+  accountDetail=id;
+  page='accounts';
+  render();
+  window.scrollTo(0,0);
+  return;
+}
  if(name==='adjustBalance'){adjustBalanceForm(id);return}if(name==='saveBalanceAdjustment'){const a=account(editing);if(!a)throw Error('账户不存在');const deltaC=cents($('balanceTarget').value)-balance(a.id);if(!deltaC){closeModal();return}state.transactions.push({id:uid(),type:'adjustment',from:a.id,to:'',amount:Math.abs(deltaC),adjustSign:deltaC>0?1:-1,toAmount:0,date:now(),time:'',category:'余额调整',description:'余额调整',payee:'',note:$('balanceNote').value.trim(),tags:[],discount:0,splits:[],attachments:[],created:new Date().toISOString()});await save();closeModal();render();t('余额已调整');return}if(name==='newTx'){if(!state.accounts.length){t('请先新建账户或导入MoneyWiz CSV');newAccount();return}txForm('',id);return}if(name==='editTx'){const x=state.transactions.find(z=>z.id===id);if(x?.type==='adjustment')viewAdjustment(id);else txForm(id);return}
  if(name==='selectCsv'){$('csvFile').click();return}if(name==='csvHelp'){csvHelp();return}if(name==='backupJson'){backup();return}if(name==='exportCsv'){openExportDialog('simple');return}if(name==='restoreJson'){$('jsonFile').click();return}if(name==='doImportCsv'){importCSV();return}
  if(name==='saveAccount'){let form=$('accountForm');if(!form.reportValidity())return;const f=new FormData(form),name=String(f.get('name')||'').trim();if(!name)throw Error('账户名不能为空');let opening=cents(f.get('opening'));let groupId=String(f.get('group')||'').trim();let chosenGroup=(state.accountGroups||[]).find(g=>g.id===groupId);if(groupId&&!chosenGroup)throw Error('所属分组不存在，请重新选择');let group=chosenGroup?.name||'';let kind=String(f.get('kind'));let poolId=kind==='credit'?String(f.get('poolId')||''):'';let cur=editing?account(editing)?.currency:String(f.get('currency'));let iconChoice=String(f.get('icon')||'auto');let iconImage='';if(iconChoice==='custom'){const file=$('accountIconFile')?.files?.[0];iconImage=file?await compressAccountIcon(file):account(editing)?.iconImage||'';if(!iconImage)throw Error('请先选择自定义图标图片，或改选一个内置图标')}let icon=iconChoice==='custom'?'auto':validIcon(iconChoice);
@@ -2101,34 +2152,64 @@ function checkRepaymentReminders(){
   const today=new Date(); today.setHours(0,0,0,0);
   const thisMonthStr=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0');
   
-  // 计算今天距离下个还款日的天数
-  const getDaysUntil=payDay=>{
-    let y=today.getFullYear(), m=today.getMonth();
-    let target=new Date(y, m, Math.min(payDay, monthLastDay(y, m+1)));
-    if(target<today){ // 如果本月还款日已过，算下个月
-      m++; if(m>11){m=0;y++;}
-      target=new Date(y, m, Math.min(payDay, monthLastDay(y, m+1)));
+    // 智能计算距离还款日还有几天（支持固定日期和账单日后N天）
+  const getDaysUntilDue = (account, currentDate) => {
+    let targetDate;
+    if (account.payDayType === 'offset') {
+      // 找离今天最近的账单日（若今天未到本月账单日，则取上个月）
+      let bDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), Math.min(account.billDay || 5, monthLastDay(currentDate.getFullYear(), currentDate.getMonth() + 1)));
+      if (currentDate < bDay) {
+        bDay.setMonth(bDay.getMonth() - 1);
+      }
+      let due = new Date(bDay.getTime());
+      due.setDate(due.getDate() + (account.payDayOffset || 20));
+      
+      // 如果算出来的还款日小于今天，说明已过，顺延到下个月账单日后
+      if (due < currentDate) {
+        let nextM = bDay.getMonth() + 1;
+        let nextY = bDay.getFullYear();
+        if (nextM > 11) { nextM = 0; nextY++; }
+        bDay = new Date(nextY, nextM, Math.min(account.billDay || 5, monthLastDay(nextY, nextM + 1)));
+        due = new Date(bDay.getTime());
+        due.setDate(due.getDate() + (account.payDayOffset || 20));
+      }
+      targetDate = due;
+    } else {
+      let payDay = account.payDay || 25;
+      let target = new Date(currentDate.getFullYear(), currentDate.getMonth(), Math.min(payDay, monthLastDay(currentDate.getFullYear(), currentDate.getMonth() + 1)));
+      if (target < currentDate) {
+        let nextM = currentDate.getMonth() + 1;
+        let nextY = currentDate.getFullYear();
+        if (nextM > 11) { nextM = 0; nextY++; }
+        target = new Date(nextY, nextM, Math.min(payDay, monthLastDay(nextY, nextM + 1)));
+      }
+      targetDate = target;
     }
-    return Math.round((target-today)/(1000*60*60*24));
+        // 返回相差的天数和具体的日期字符串
+    targetDate.setHours(0,0,0,0);
+    const days = Math.round((targetDate - currentDate) / (1000 * 60 * 60 * 24));
+    const dateStr = `${targetDate.getMonth() + 1}月${targetDate.getDate()}日`;
+    return { days, dateStr };
   };
 
-  const targets=state.accounts.filter(a=>{
-    if(a.kind!=='credit'||a.hidden)return false;
-    // 找到“流动负债”分组
+      const targets=[];
+  for(const a of state.accounts){
+    if(a.kind!=='credit'||a.hidden)continue;
     const group=state.accountGroups.find(g=>g.id===a.groupId);
-    if(!group||group.name!=='流动负债')return false;
-    const payDay=a.payDay||25;
-    const days=getDaysUntil(payDay);
-    // 如果天数在 0 到 2 之间（包含今天），且本月未勾选
+    if(!group||group.name!=='流动负债')continue;
+    
+    const { days, dateStr } = getDaysUntilDue(a, today);
     const key=a.id+'_'+thisMonthStr;
-    return days>=0&&days<=2&&!state.repaymentLogs?.[key];
-  });
+    if(days>=0 && days<=2 && !state.repaymentLogs?.[key]){
+      targets.push({ ...a, dueDateStr: dateStr, daysLeft: days });
+    }
+  }
   
   if(targets.length>0)showRepaymentAlert(targets);
 }
 
 function showRepaymentAlert(accounts){
-  const rows=accounts.map(a=>`<label class="v41BatchItem" style="align-items:flex-start"><input type="checkbox" class="repayCheck" data-id="${E(a.id)}" style="margin-top:3px"><span style="flex:1;min-width:0"><b style="font-size:15px">${E(a.name)}</b><small>还款日：每月 ${a.payDay||25} 号</small></span></label>`).join('');
+  const rows=accounts.map(a=>`<label class="v41BatchItem" style="align-items:flex-start"><input type="checkbox" class="repayCheck" data-id="${E(a.id)}" style="margin-top:3px"><span style="flex:1;min-width:0"><b style="font-size:15px">${E(a.name)}</b><small style="color:#d94b4b;font-weight:bold">还款日：${a.dueDateStr}${a.daysLeft === 0 ? '（今天）' : `（还有 ${a.daysLeft} 天）`}</small></span></label>`).join('');
   
   modal('💳 信用卡还款提醒',`<div class="notice" style="background:#fff0e8;border-color:#f5c7ac;color:#994c22;font-weight:bold">以下信用卡临近还款日，请确认还款状态：</div><div class="v41BatchList" style="margin-top:15px">${rows}</div><p class="smallHint">勾选“已还款”后，本月将不再提醒该卡。</p>`,`<button class="btn blue" id="btnConfirmRepay" disabled data-act="confirmRepayment">确认并关闭</button>`);
   
