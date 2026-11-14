@@ -944,7 +944,7 @@ function rewardHistoryBlock(ruleId){
     <summary><span class="when-closed">查看历史达成记录</span><span class="when-open">收起历史</span></summary>
     <div style="padding-top:10px">
       ${h.length ? h.map(x=>`
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; border-bottom:1px dashed #eef0f4; padding:10px 0;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px dashed #eef0f4; padding:10px 0;">
           <span style="color:#788492; font-size:12px; flex-shrink:0;">${E(x.start)} ~ ${E(x.end)}</span>
           <b style="flex:1; text-align:right; font-size:12px; color:${x.achieved.length?'#d94b4b':'#8794a7'}; word-break:break-all; line-height:1.5;">
             ${x.achieved.length?'已达成 '+x.achieved.join('、'):'未达标'}
