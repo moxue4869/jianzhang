@@ -321,8 +321,8 @@ const validIcon=v=>iconChoices.some(z=>z[0]===v)?v:'auto';
 const currencies=['CNY','HKD','USD','EUR','JPY','GBP','SGD','TWD','AUD','CAD'];const csym={CNY:'¥',HKD:'HK$',USD:'$',EUR:'€',JPY:'¥',GBP:'£',SGD:'S$',TWD:'NT$',AUD:'A$',CAD:'C$'};
 const fmt=(c,currency='CNY',signed=false)=>{let n=Number(c)/100;let v=Math.abs(n).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});return `${signed?(n>0?'+':n<0?'−':''):n<0?'−':''}${csym[currency]||currency+' '}${v}`};
 const cents=s=>{let v=Number(String(s??'').trim());if(!Number.isFinite(v)||Math.abs(v)>1e12)throw Error('金额无效或过大');return Math.round(v*100)};
-const initial=()=>({schema:4,accountGroups:[],accounts:[],transactions:[],customCategories:[],creditPools:[],groupOrder:{},categoryOrder:[],hiddenCategories:[],fxRates:{CNY:1},rewardRules:[],repaymentLogs:{},rewardHistory:[],createdAt:new Date().toISOString()});
-const blankFilter=()=>({accounts:[],types:[],categories:[],tags:[],q:'',month:'',amountOp:'any',amountValue:'',dateOp:'any',dateStart:'',dateEnd:'',advanced:false});
+const initial=()=>({schema:4,accountGroups:[],accounts:[],transactions:[],customCategories:[],creditPools:[],groupOrder:{},categoryOrder:[],hiddenCategories:[],fxRates:{CNY:1},rewardRules:[],repaymentLogs:{},rewardHistory:[],annualFees:[],createdAt:new Date().toISOString()});
+const blankFilter=()=>({accounts:[],types:[],categories:[],tags:[],q:'',month:'',amountOp:'any',amountValue:'',dateOp:'any',dateStart:'',dateEnd:'',advanced:false, jumpType:'', jumpLabel:''});
 let db=null, storage='idb', state=initial(), page='accounts', accountDetail='', editing='', editKind='', txType='expense', filter=blankFilter(), ledgerScope='', accountSearch='', reportDateStart=curMonth()+'-01', reportDateEnd=now(), csvContext=null, toastTimer=0, creditPeriodMode='billing', creditPeriodCount=3, isForceModal=false, ledgerBatchMode=false, selectedTxIds=[], accountsScrollPos=0;
 function t(msg){const x=$('toast');x.textContent=msg;x.classList.add('on');clearTimeout(toastTimer);toastTimer=setTimeout(()=>x.classList.remove('on'),3500)}
 function openDB(){return new Promise((res,rej)=>{if(!window.indexedDB)return rej(Error('当前环境不支持IndexedDB'));const r=indexedDB.open('jianzhao-ledger-v2',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onerror=()=>rej(r.error);r.onsuccess=()=>res(r.result)})}
@@ -374,6 +374,7 @@ function validate(obj){
   return {
     id:r.id, accountId:r.accountId, name:r.name.slice(0,160),
     cycle: isCycle ? 'monthly' : 'once',
+    archived: !!r.archived,
     startDate: isCycle ? '' : r.startDate,
     endDate: isCycle ? '' : r.endDate,
     startDay: Number(r.startDay)||1,
@@ -382,7 +383,7 @@ function validate(obj){
     targets:(Array.isArray(r.targets)?r.targets:[]).slice(0,20).filter(t=>t&&Number.isSafeInteger(t.amount)&&t.amount>0).map(t=>({amount:t.amount,label:String(t.label||'').slice(0,80)})),
     createdAt:String(r.createdAt||'')
   };
-}).filter(Boolean),repaymentLogs:typeof obj.repaymentLogs==='object'&&obj.repaymentLogs?Object.fromEntries(Object.entries(obj.repaymentLogs).filter(([k,v])=>typeof k==='string'&&v===true)):{},rewardHistory:Array.isArray(obj.rewardHistory)?obj.rewardHistory.slice(0,10000):[],createdAt:obj.createdAt||new Date().toISOString()};
+}).filter(Boolean),repaymentLogs:typeof obj.repaymentLogs==='object'&&obj.repaymentLogs?Object.fromEntries(Object.entries(obj.repaymentLogs).filter(([k,v])=>typeof k==='string'&&v===true)):{},rewardHistory:Array.isArray(obj.rewardHistory)?obj.rewardHistory.slice(0,10000):[],annualFees:Array.isArray(obj.annualFees)?obj.annualFees.slice(0,1000).map(f=>({id:String(f.id||uid()),accountId:String(f.accountId||''),name:String(f.name||'主卡').slice(0,80),amount:Number(f.amount)||0,feeMonth:Number(f.feeMonth)||1,feeDay:Number(f.feeDay)||1,cutoffType:['same','prevMonthEnd'].includes(f.cutoffType)?f.cutoffType:'same',waiverType:['none','amount','count','points'].includes(f.waiverType)?f.waiverType:'none',waiverTarget:Number(f.waiverTarget)||0,filterTag:String(f.filterTag||'').slice(0,50),manualAmount:Number(f.manualAmount)||0,lastPaidYear:Number(f.lastPaidYear)||0,useManual:!!f.useManual})):[],createdAt:obj.createdAt||new Date().toISOString()};
 }
 
 const account=id=>state.accounts.find(a=>a.id===id), aName=id=>account(id)?.name||'未知账户';
@@ -407,13 +408,17 @@ function poolUsed(p){
 }
 
 function creditAvailable(a){
-  const used=creditUsed(a), pool=poolById(a.poolId);
-  const cardFree=a.cardLimit>0?a.cardLimit-used:Infinity;
+  const b = balance(a.id);
+  const used = Math.max(0, -b);
+  const overpayment = Math.max(0, b); // 溢缴款
+  const pool = poolById(a.poolId);
+  
+  const cardFree = a.cardLimit > 0 ? a.cardLimit - used + overpayment : Infinity;
   if(!pool) return cardFree;
   
   const poolFreeInPoolCur = Math.max(0, pool.limit - poolUsed(pool));
-  const crossRate = getCrossRate(pool.currency, a.currency); // 池币种折回卡币种
-  const poolFreeInCardCur = Math.round(poolFreeInPoolCur * crossRate);
+  const crossRate = getCrossRate(pool.currency, a.currency);
+  const poolFreeInCardCur = Math.round(poolFreeInPoolCur * crossRate) + overpayment;
   
   return Math.min(poolFreeInCardCur, cardFree);
 }
@@ -453,20 +458,35 @@ function groupNames(){return (state.accountGroups||[]).slice().sort((a,b)=>a.sor
 const printableGroup=g=>g||'未分组';
 function orderedGroupNames(currency,groups){const names=[...new Set(groups)];const all=groupNames();return names.sort((a,b)=>{const ai=all.indexOf(a),bi=all.indexOf(b);return ai>=0&&bi>=0?ai-bi:ai>=0?-1:bi>=0?1:!a?1:!b?-1:a.localeCompare(b,'zh-CN')})}
 function sortedAccounts(list){
+  // 提取账户活动状态的辅助函数
+  const getRewardStatus = (acc) => {
+    const activeRules = (state.rewardRules||[]).filter(r=>!r.archived&&r.accountId===acc.id&&(r.cycle==='monthly'||r.endDate>=now()));
+    if (!activeRules.length) return 1; // 1 = 无活动
+    for (const r of activeRules) {
+      const period = getPeriodRange(r);
+      const net = rewardNet({...r, startDate: period.start, endDate: period.end});
+      const maxTarget = Math.max(...r.targets.map(t=>t.amount), 1);
+      if (net >= maxTarget) return 3; // 3 = 已达成
+    }
+    return 2; // 2 = 进行中
+  };
+
   return list.slice().sort((a,b)=>{
-    // 优先按有无有效活动排序
-    const aHasReward = (state.rewardRules||[]).some(r=>r.accountId===a.id&&(r.cycle==='monthly'||r.endDate>=now()));
-    const bHasReward = (state.rewardRules||[]).some(r=>r.accountId===b.id&&(r.cycle==='monthly'||r.endDate>=now()));
-    if(aHasReward && !bHasReward) return -1;
-    if(!aHasReward && bHasReward) return 1;
+    const statusA = getRewardStatus(a);
+    const statusB = getRewardStatus(b);
     
-    // 其次按手动 sortOrder
+    // 状态降序排列：已达成(3) > 进行中(2) > 无活动(1)
+    if (statusA !== statusB) {
+      return statusB - statusA;
+    }
+    
+    // 状态相同时，按手动 sortOrder 或名称排序
     return (a.sortOrder||0)-(b.sortOrder||0) || a.name.localeCompare(b.name,'zh-CN');
   });
 }
 function nextAccountSort(currency,group){const arr=state.accounts.filter(a=>a.currency===currency&&(a.group||'')===group);return arr.length?Math.max(...arr.map(a=>Number(a.sortOrder)||0),0)+10:10}
 function manageGroups(){editKind='groupManager';const arr=(state.accountGroups||[]).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
- modal('管理账户分组',`<div class="notice blueTint">分组由你独立维护；新建账户可直接选择已有分组或不分组。删除分组只解除账户归属，不删除账户与交易。分组及组内账户可在「拖动排序」中长按排序。</div><div class="v41GroupAdd"><input class="field" id="v41GroupNew" maxlength="80" placeholder="输入新分组名称"><button type="button" class="btn soft" data-act="v41CreateGroup">＋ 新建分组</button><button type="button" class="btn" data-act="v41BatchGroupForm">批量设置账户分组</button></div><div class="v41GroupList sortGroupList" data-sort-list="group" data-currency="CNY">${arr.map(g=>`<div class="v41GroupRow sortItem sortGroup" data-sort-item="group" data-sort-currency="CNY" data-sort-group="${E(g.name)}" data-sort-key="${E(g.id)}"><span class="sortGrab" data-sort-handle="1" role="button" tabindex="0" aria-label="拖动分组排序">⋮⋮</span><span class="v41GroupName"><b>${E(g.name)}</b><small>${state.accounts.filter(a=>a.groupId===g.id).length} 个账户</small></span><button class="btn tiny" data-act="sortMove" data-id="${E(g.id)}" data-kind="group" data-dir="-1" title="上移">↑</button><button class="btn tiny" data-act="sortMove" data-id="${E(g.id)}" data-kind="group" data-dir="1" title="下移">↓</button><button class="btn tiny" data-act="v41RenameGroup" data-id="${E(g.id)}">重命名</button><button class="btn tiny" data-act="v41MoveGroup" data-id="${E(g.id)}">批量移动</button><button class="btn tiny warn" data-act="v41DeleteGroup" data-id="${E(g.id)}">删除</button></div>`).join('')||'<p class="smallHint">尚无分组，可在上方创建。</p>'}</div>`,`<button class="btn" data-act="closeModal">完成</button>`)}
+ modal('管理账户分组',`<div class="notice blueTint">分组由你独立维护；新建账户可直接选择已有分组或不分组。删除分组只解除账户归属，不删除账户与交易。分组及组内账户可在「拖动排序」中长按排序。</div><div class="v41GroupAdd"><input class="field" id="v41GroupNew" maxlength="80" placeholder="输入新分组名称"><button type="button" class="btn soft" data-act="v41CreateGroup">新建分组</button><button type="button" class="btn" data-act="v41BatchGroupForm">批量设置账户分组</button></div><div class="v41GroupList sortGroupList" data-sort-list="group" data-currency="CNY">${arr.map(g=>`<div class="v41GroupRow sortItem sortGroup" data-sort-item="group" data-sort-currency="CNY" data-sort-group="${E(g.name)}" data-sort-key="${E(g.id)}"><span class="sortGrab" data-sort-handle="1" role="button" tabindex="0" aria-label="拖动分组排序">⋮⋮</span><span class="v41GroupName"><b>${E(g.name)}</b><small>${state.accounts.filter(a=>a.groupId===g.id).length} 个账户</small></span><button class="btn tiny" data-act="sortMove" data-id="${E(g.id)}" data-kind="group" data-dir="-1" title="上移">↑</button><button class="btn tiny" data-act="sortMove" data-id="${E(g.id)}" data-kind="group" data-dir="1" title="下移">↓</button><button class="btn tiny" data-act="v41RenameGroup" data-id="${E(g.id)}">重命名</button><button class="btn tiny" data-act="v41MoveGroup" data-id="${E(g.id)}">批量移动</button><button class="btn tiny warn" data-act="v41DeleteGroup" data-id="${E(g.id)}">删除</button></div>`).join('')||'<p class="smallHint">尚无分组，可在上方创建。</p>'}</div>`,`<button class="btn" data-act="closeModal">完成</button>`)}
 function groupKey(currency,group){return JSON.stringify([currency,group])}
 function renderCurrencyGroups(currency,accounts,ignoreCurrency=false){
  const byGroup=new Map();for(const a of accounts){const group=String(a.group||'').trim();if(!byGroup.has(group))byGroup.set(group,[]);byGroup.get(group).push(a)}
@@ -508,13 +528,47 @@ function renderCurrencyGroups(currency,accounts,ignoreCurrency=false){
 }
 function moveItem(ids,source,target,direction=0){let arr=[...ids],si=arr.indexOf(source),ti=direction?si+direction:arr.indexOf(target);if(si<0||ti<0||ti>=arr.length||ti===si)return null;arr.splice(si,1);arr.splice(ti,0,source);return arr}
 async function reorderGroup(currency,source,target,direction=0){if(!source)return;const names=groupNames(),updated=moveItem(names,source,target,direction);if(!updated)return;updated.forEach((name,i)=>{const g=(state.accountGroups||[]).find(v=>v.name===name);if(g)g.sortOrder=(i+1)*10});await save();renderSortBody();render();if(editKind==='groupManager')manageGroups()}
-async function reorderAccount(id,target,direction=0){const a=account(id);if(!a)return;const list=sortedAccounts(state.accounts.filter(x=>x.currency===a.currency&&(x.group||'')===(a.group||'')));const updated=moveItem(list.map(z=>z.id),id,target,direction);if(!updated)return;updated.forEach((v,i)=>account(v).sortOrder=(i+1)*10);await save();renderSortBody();render()}
+async function reorderAccount(id,target,direction=0){const a=account(id);if(!a)return;const list=sortedAccounts(state.accounts.filter(x=>(x.group||'')===(a.group||'')));const updated=moveItem(list.map(z=>z.id),id,target,direction);if(!updated)return;updated.forEach((v,i)=>account(v).sortOrder=(i+1)*10);await save();renderSortBody();render()}
 function sortRow(item,kind,currency,group=''){
  const uidv=kind==='group'?group:item.id, label=kind==='group'?printableGroup(group):item.name;
  const groupId=groupKey(currency,group),itemKey=kind==='group'?groupId:item.id;
  return `<div class="sortItem ${kind==='group'?'sortGroup':'sortAccount'}" data-sort-item="${kind}" data-sort-currency="${E(currency)}" data-sort-group="${E(group)}" data-sort-key="${E(itemKey)}"><div class="sortGrab" role="button" tabindex="0" aria-label="拖动${E(label)}排序" data-sort-handle="1">${ic('list')}<span class="dragDots">⋮⋮</span></div>${kind==='group'?`<b class="sortItemLabel">${E(label)}</b>`:`<span class="accountIcon ${colors(item.id)}" style="width:32px;height:32px;font-size:14px">${accountIconContent(item)}</span><span class="sortItemLabel">${E(label)}</span>`}<div class="sortArrows"><button type="button" class="sortArrow" data-act="sortMove" data-id="${E(itemKey)}" data-kind="${kind}" data-dir="-1" aria-label="上移">↑</button><button type="button" class="sortArrow" data-act="sortMove" data-id="${E(itemKey)}" data-kind="${kind}" data-dir="1" aria-label="下移">↓</button></div></div>`
 }
-function renderSortBody(){const node=$('modalBody');if(!node||editKind!=='sortAccounts')return;const currenciesNow=[...new Set(state.accounts.map(a=>a.currency))].sort((a,b)=>a==='CNY'?-1:b==='CNY'?1:a.localeCompare(b));node.innerHTML=`<div class="notice blueTint">按住左侧「⋮⋮」上下拖动；也可以点击右侧箭头。分组可调整顺序，组内账户单独调整。不同币种仍分开显示。</div>${currenciesNow.map(cur=>{let names=orderedGroupNames(cur,state.accounts.filter(a=>a.currency===cur).map(a=>a.group||''));return `<div class="sortCurrency"><h3>${E(cur)} 账户</h3><div class="sortGroupList" data-sort-list="group" data-currency="${E(cur)}">${names.map(group=>`<div class="sortGroupContainer">${sortRow(null,'group',cur,group)}<div class="sortAccountList" data-sort-list="account" data-currency="${E(cur)}" data-group="${E(group)}">${sortedAccounts(state.accounts.filter(a=>a.currency===cur&&(a.group||'')===group)).map(a=>sortRow(a,'account',cur,group)).join('')}</div></div>`).join('')}</div></div>`}).join('')||'<div class="empty">请先新建账户</div>'}`}
+function renderSortBody(){
+  const node=$('modalBody');if(!node||editKind!=='sortAccounts')return;
+  
+  const groups = (state.accountGroups||[]).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  const groupedAccounts = new Map();
+  groups.forEach(g => groupedAccounts.set(g.id, []));
+  
+  state.accounts.forEach(a => {
+    const gid = a.groupId || '';
+    if(!groupedAccounts.has(gid)) groupedAccounts.set(gid, []);
+    groupedAccounts.get(gid).push(a);
+  });
+
+  const renderGroupBlock = (gid, gName, accs) => {
+    if(gid === '' && accs.length === 0) return ''; 
+    const groupKeyStr = groupKey('', gName); 
+    return `<div class="sortGroupContainer" style="margin-bottom:12px">
+      ${gid !== '' ? sortRow(null,'group','',gName) : `<div class="sortItem sortGroup"><b class="sortItemLabel">未分组</b></div>`}
+      <div class="sortAccountList" data-sort-list="account" data-currency="" data-group="${E(gName)}">
+        ${sortedAccounts(accs).map(a=>sortRow(a,'account','',gName)).join('')}
+        ${accs.length===0 ? '<div class="empty" style="padding:10px;font-size:12px">暂无账户</div>' : ''}
+      </div>
+    </div>`;
+  };
+
+  let html = `<div class="notice blueTint">按住左侧「⋮⋮」上下拖动。账户按你的自定义分组展示，不再按币种切分。</div>`;
+  
+  groups.forEach(g => {
+    html += renderGroupBlock(g.id, g.name, groupedAccounts.get(g.id)||[]);
+  });
+  
+  html += renderGroupBlock('', '未分组', groupedAccounts.get('')||[]);
+  
+  node.innerHTML = html;
+}
 function openSortAccounts(){editKind='sortAccounts';modal('拖动账户与分组排序','',`<button class="btn soft" data-act="closeModal">完成</button>`);renderSortBody()}
 let dragSorter=null;
 function sortDraggedAt(e){if(!dragSorter)return;const ghost=dragSorter.ghost;ghost.style.left=(e.clientX+16)+'px';ghost.style.top=(e.clientY+12)+'px';const target=document.elementFromPoint(e.clientX,e.clientY)?.closest('[data-sort-item]');if(dragSorter.hover)dragSorter.hover.classList.remove('sortOver');dragSorter.hover=null;if(target&&target!==dragSorter.from&&target.dataset.sortItem===dragSorter.from.dataset.sortItem&&(target.dataset.sortItem==='group'?target.closest('.sortGroupList')===dragSorter.from.closest('.sortGroupList'):target.parentElement===dragSorter.from.parentElement)){dragSorter.hover=target;target.classList.add('sortOver')}}
@@ -525,13 +579,40 @@ document.addEventListener('pointercancel',()=>{if(!dragSorter)return;dragSorter.
 
 function accountRow(a){
   let b=balance(a.id),p=poolById(a.poolId);
-  const hasReward = (state.rewardRules||[]).some(r=>r.accountId===a.id&&(r.cycle==='monthly'||r.endDate>=now()));
-  const bgStyle = hasReward ? 'background:#fffbf5;' : '';
-  const rewardTag = hasReward ? `<span style="display:inline-block;font-size:10px;background:#ff8c00;color:#fff;padding:2px 6px;border-radius:6px;margin-left:6px;vertical-align:middle;font-weight:600;line-height:1.2">🎁 有活动</span>` : '';
   
-  return `<button class="accountRow" data-act="openAccount" data-id="${E(a.id)}" style="${bgStyle}"><span class="accountIcon ${colors(a.id)}" style="box-shadow:0 2px 10px ${v41HexRGBA(v41ThemeBase(a),.18)}">${accountIconContent(a)}</span><span style="min-width:0;flex:1"><span class="accountName">${E(a.name)}${rewardTag}</span></span><span class="accountMoney ${b<0?'negative':b>0?'':'zero'}">${fmt(b,a.currency)}</span><span class="arrow">›</span></button>`
+  // 找出该账户所有生效中的规则
+  const activeRules = (state.rewardRules||[]).filter(r=>!r.archived&&r.accountId===a.id&&(r.cycle==='monthly'||r.endDate>=now()));
+  const hasReward = activeRules.length > 0;
+  let isAchieved = false;
+  
+  // 计算是否有规则达到了最高档
+  if (hasReward) {
+    for (const r of activeRules) {
+      const period = getPeriodRange(r);
+      const net = rewardNet({...r, startDate: period.start, endDate: period.end});
+      const maxTarget = Math.max(...r.targets.map(t=>t.amount), 1);
+      if (net >= maxTarget) {
+        isAchieved = true;
+        break; // 只要有一个规则满额了，就标为已达成
+      }
+    }
+  }
+  
+  let bgStyle = '';
+  let rewardTag = '';
+  
+  if (hasReward) {
+    if (isAchieved) {
+      bgStyle = 'background:#e8f8f0;'; // 极浅的绿色底
+      rewardTag = `<span style="display:inline-block;font-size:10px;background:#10b981;color:#fff;padding:2px 6px;border-radius:6px;margin-left:6px;vertical-align:middle;font-weight:600;line-height:1.2">已达成</span>`;
+    } else {
+      bgStyle = 'background:#fffbf5;'; // 极浅的橙色底
+      rewardTag = `<span style="display:inline-block;font-size:10px;background:#ff8c00;color:#fff;padding:2px 6px;border-radius:6px;margin-left:6px;vertical-align:middle;font-weight:600;line-height:1.2">进行中</span>`;
+    }
+  }
+  
+  return `<button class="accountRow" data-act="openAccount" data-id="${E(a.id)}" style="${bgStyle}"><span class="accountIcon ${colors(a.id)}" style="box-shadow:0 2px 10px ${v41HexRGBA(v41ThemeBase(a),.18)}">${accountIconContent(a)}</span><span style="min-width:0;flex:1"><span class="accountName">${E(a.name)}${rewardTag}</span></span><span class="accountMoney" style="color:${b<0?'#269b62':b>0?'#d94b4b':'#6e7785'}">${fmt(b,a.currency)}</span><span class="arrow">›</span></button>`
 }
-
 function accountMatches(a,q){let terms=q.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);if(!terms.length)return true;const text=[a.name,a.group,a.currency,a.kind].join(' ').toLocaleLowerCase();return terms.every(x=>text.includes(x))}
 function accountListsHtml(){
  const matches=state.accounts.filter(a=>!a.hidden&&accountMatches(a,accountSearch));
@@ -544,7 +625,7 @@ function renderAccounts(){
  const w=wealthSummary();
  const hero=`<div class="hero wealthHero"><button class="wealthTop" data-act="wealthDetail" data-id="net"><div class="eyebrow">我的账户 · 净资产（折合人民币）</div><div class="mainNumber">${w.complete?fmt(w.net,'CNY'):'—'}</div><div class="wealthHint">点击查看净资产构成 ›</div></button><div class="wealthStats"><button class="wealthMetric" data-act="wealthDetail" data-id="asset"><small>总资产</small><strong>${w.complete?fmt(w.assets,'CNY'):'—'}</strong></button><button class="wealthMetric liability" data-act="wealthDetail" data-id="liability"><small>总负债</small><strong>${w.complete?fmt(w.liabilities,'CNY'):'—'}</strong></button></div>${w.missing.length?`<div class="wealthNotice">未设置 ${E(w.missing.join('、'))} 对人民币汇率，暂不显示不完整的总额。可在「设置 → 管理报表汇率」补充。</div>`:''}<div class="meta">${state.accounts.length} 个账户 · 不限制数量 · ${groupNames().length} 个自定义分组 · ${w.rows.length} 个账户参与资产负债统计 · 仅本地保存</div></div>`;
  const pools=(state.creditPools||[]).length?`<div class="sectionTitle"><h2>共享信用额度</h2><button class="btn tiny soft" data-act="newPool">管理额度池</button></div><div class="stack">${state.creditPools.map(p=>`<button class="poolCard" data-act="viewPoolCards" data-id="${E(p.id)}"><div><b>${E(p.name)}</b><small>${E(p.currency)} · ${state.accounts.filter(a=>a.poolId===p.id).length} 张卡</small></div><div class="poolRight"><b>${fmt(p.limit-poolUsed(p),p.currency)}</b><small>总额 ${fmt(p.limit,p.currency)}</small></div></button>`).join('')}</div>`:'';
- const groupBar=`<div class="sectionTitle"><h2>账户列表</h2><div class="accountTools"><button class="btn tiny" data-act="sortAccounts">拖动排序</button><button class="btn tiny" data-act="manageGroups">管理分组</button><button class="btn tiny soft" data-act="newAccount">新建账户</button></div></div><div class="accountSearch"><span>${ic('search')}</span><input id="accountSearchQ" type="search" autocomplete="off" placeholder="搜索账户名称、分组、币种或卡尾号" value="${E(accountSearch)}" aria-label="搜索账户"></div>`;
+ const groupBar=`<div class="sectionTitle"><h2>账户列表</h2><div class="accountTools"><button class="btn tiny" data-act="sortAccounts">拖动排序</button><button class="btn tiny" data-act="manageGroups">管理分组</button><button class="btn tiny" data-act="viewAllAnnualFees">年费看板</button><button class="btn tiny" data-act="newAccount">新建账户</button></div></div><div class="accountSearch"><span>${ic('search')}</span><input id="accountSearchQ" type="search" autocomplete="off" placeholder="搜索账户名称、分组、币种或卡尾号" value="${E(accountSearch)}" aria-label="搜索账户"></div>`;
  return `${storage==='unavailable'?'<div class="notice">当前浏览器无法持久保存数据。请用正常浏览器或 HTTPS 安装 PWA 后再导入账本。</div>':''}${hero}${pools}${groupBar}<div id="accountsBody">${accountListsHtml()}</div><div class="pageFoot">请定期导出完整 JSON 备份，切勿将此浏览器作为唯一账本副本</div>`
 }
 function rewardNet(rule){
@@ -561,20 +642,273 @@ function rewardNet(rule){
  }
  return Math.max(0,spent-refunded-cashback);
 }
+// 智能计算当前所处的年费周期
+function getFeePeriod(fee) {
+  const today = new Date(now()+'T12:00:00');
+  let targetYear = today.getFullYear();
+  let feeDateThisYear = new Date(targetYear, fee.feeMonth - 1, fee.feeDay);
+  
+  // 如果今年的年费日已经过了，目标年份加1
+  if (today > feeDateThisYear) targetYear++;
+
+  let endYear = targetYear;
+  let endMonth = fee.feeMonth;
+  let endDay = fee.feeDay;
+
+  if (fee.cutoffType === 'prevMonthEnd') {
+    endMonth = endMonth - 1;
+    if (endMonth === 0) { endMonth = 12; endYear--; }
+    endDay = new Date(endYear, endMonth, 0).getDate(); // 上月最后一天
+  }
+
+  const end = new Date(endYear, endMonth - 1, endDay);
+  const start = new Date(endYear, endMonth - 1, endDay);
+  start.setFullYear(start.getFullYear() - 1);
+  start.setDate(start.getDate() + 1);
+
+  const pad = n => String(n).padStart(2, '0');
+  return { 
+    startStr: `${start.getFullYear()}-${pad(start.getMonth()+1)}-${pad(start.getDate())}`, 
+    endStr: `${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())}`,
+    feeDateStr: `${pad(fee.feeMonth)}-${pad(fee.feeDay)}`,
+    targetYear 
+  };
+}
+
+function calcFeeProgress(fee) {
+  if (fee.useManual) return fee.manualAmount;
+  if (fee.waiverType === 'none' || fee.waiverType === 'points') return 0;
+  
+  const period = getFeePeriod(fee);
+  let totalAmount = 0, count = 0;
+
+  for (const tx of state.transactions) {
+    if (tx.from !== fee.accountId) continue;
+    if (tx.date < period.startStr || tx.date > period.endStr) continue;
+    if (fee.filterTag && (!tx.tags || !tx.tags.includes(fee.filterTag))) continue;
+    
+    if (tx.type === 'expense') { totalAmount += tx.amount; count++; }
+    else if (tx.type === 'refund') { totalAmount -= tx.amount; if (fee.waiverType === 'count') count = Math.max(0, count - 1); }
+  }
+  return fee.waiverType === 'amount' ? Math.max(0, totalAmount) : count;
+}
+
+function daysUntilFee(fee) {
+  const today = new Date(now()+'T12:00:00');
+  const period = getFeePeriod(fee);
+  let target = new Date(period.targetYear, fee.feeMonth - 1, fee.feeDay);
+  return Math.ceil((target - today) / (1000 * 60 * 60 * 24));
+}
+function viewAllAnnualFees(){
+  if(!state.annualFees || state.annualFees.length === 0){
+    modal('年费看板', '<div class="empty">暂未配置任何年费规则，请进入具体信用卡账户添加。</div>', '<button class="btn blue" data-act="closeModal">知道了</button>');
+    return;
+  }
+
+  // 按账户分组
+  const grouped = {};
+  state.annualFees.forEach(f => {
+    if(!grouped[f.accountId]) grouped[f.accountId] = [];
+    grouped[f.accountId].push(f);
+  });
+
+  // 生成列表
+    let html = '';
+  for(const [accId, fees] of Object.entries(grouped)){
+    const a = account(accId);
+    if(!a) continue;
+
+    // 按距离年费日的天数排序，最紧急的排在最前面
+    fees.sort((x,y) => daysUntilFee(x) - daysUntilFee(y));
+
+    html += `<div style="margin-top:20px; margin-bottom:16px;">
+      <div style="font-weight:bold;font-size:16px;margin-bottom:10px;color:#1d2330; display:flex; align-items:center; gap:8px;">
+        <span style="display:inline-block;width:4px;height:16px;background:#2387f9;border-radius:2px;"></span>
+        ${E(a.name)}
+      </div>
+      <div class="card" style="padding:14px; border-radius:16px; border:1px solid #e8ebf0; box-shadow:0 2px 10px rgba(21,43,81,0.03);">`;
+
+    fees.forEach(f => {
+      const progress = calcFeeProgress(f);
+      const days = daysUntilFee(f);
+      const period = getFeePeriod(f);
+      
+      let progressHtml = '';
+      if (f.waiverType === 'amount') {
+        const pct = Math.min(100, Math.round(progress / (f.waiverTarget||1) * 100));
+        progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">已刷 ${fmt(progress, a.currency)} / ${fmt(f.waiverTarget, a.currency)} ${f.useManual?'(手动)':''}</div><div class="barTrack" style="height:6px"><div class="barFill" style="width:${pct}%"></div></div>`;
+      } else if (f.waiverType === 'count') {
+        const pct = Math.min(100, Math.round(progress / (f.waiverTarget||1) * 100));
+        progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">已刷 ${progress} / ${f.waiverTarget} 笔 ${f.useManual?'(手动)':''}</div><div class="barTrack" style="height:6px"><div class="barFill" style="width:${pct}%"></div></div>`;
+      } else if (f.waiverType === 'none') {
+        progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px;color:#d94b4b">刚性年费</div>`;
+      } else {
+        progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">积分兑换免年费</div>`;
+      }
+
+      html += `<div style="border-bottom:1px dashed #eef0f4;padding:8px 0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <b style="font-size:13px">${E(f.name)}</b>
+          <span style="font-size:11px;color:${days <= 30 ? '#d94b4b' : '#788492'};font-weight:${days<=30?'bold':'normal'}">
+            ${days >= 0 ? '还有'+days+'天' : '已过期'}
+          </span>
+        </div>
+        <div style="font-size:11px;color:#a0a9b7;margin-top:2px">结算区间：${period.startStr.slice(5)} ~ ${period.endStr.slice(5)}</div>
+        ${progressHtml}
+        <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:6px;margin-top:10px;">
+          <button class="btn tiny soft" style="padding:6px 0;font-size:12px" data-act="updateFeeProgress" data-id="${E(f.id)}">录入进度</button>
+          <button class="btn tiny soft" style="padding:6px 0;font-size:12px" data-act="payAnnualFee" data-id="${E(f.id)}">标记已免</button>
+        </div>
+      </div>`;
+    });
+
+    html += `</div></div>`;
+  }
+
+  modal('年费看板', `<div class="notice blueTint">按距离年费日由近到远排序，红色代表30天内到期。</div>${html}`, `<button class="btn" data-act="closeModal">关闭</button>`);
+}
+function annualFeeForm(id='', accountId=''){
+  const f = (state.annualFees||[]).find(x=>x.id===id);
+  const accId = f ? f.accountId : accountId;
+  editing = id; editKind = 'annualFee';
+  
+  modal(f?'编辑年费规则':'添加年费卡片', `<form id="annualFeeForm">
+    <label class="inputLabel">卡片名称（如 主卡、副卡A）</label>
+    <input class="field" name="name" required maxlength="80" value="${E(f?.name||'')}" placeholder="例如：主卡">
+    
+    <div class="flexFields">
+      <div><label class="inputLabel">年费金额</label><input class="field" name="amount" type="number" step="0.01" required value="${f?(f.amount/100).toFixed(2):'0'}"></div>
+      <div><label class="inputLabel">免年费政策</label>
+        <select class="field" name="waiverType" id="feeWaiverType" onchange="const isNone = this.value==='none' || this.value==='points'; if(document.getElementById('feeTargetWrap')) document.getElementById('feeTargetWrap').classList.toggle('hide', isNone);">
+          <option value="none" ${f?.waiverType==='none'?'selected':''}>刚性年费</option>
+          <option value="amount" ${f?.waiverType==='amount'?'selected':''}>金额刷免</option>
+          <option value="count" ${f?.waiverType==='count'?'selected':''}>笔数刷免</option>
+          <option value="points" ${f?.waiverType==='points'?'selected':''}>积分兑换</option>
+        </select>
+      </div>
+    </div>
+    
+    <div class="flexFields">
+      <div><label class="inputLabel">收取月份</label><input class="field" name="feeMonth" type="number" min="1" max="12" required value="${f?.feeMonth||1}"></div>
+      <div><label class="inputLabel">收取日期</label><input class="field" name="feeDay" type="number" min="1" max="31" required value="${f?.feeDay||1}"></div>
+    </div>
+
+    <label class="inputLabel">统计截止日（用于算刷免）</label>
+    <select class="field" name="cutoffType">
+      <option value="same" ${f?.cutoffType!=='prevMonthEnd'?'selected':''}>与年费收取日同日</option>
+      <option value="prevMonthEnd" ${f?.cutoffType==='prevMonthEnd'?'selected':''}>年费收取当月的前一个月末</option>
+    </select>
+
+    <div id="feeTargetWrap" class="${(!f||f.waiverType==='none'||f.waiverType==='points')?'hide':''}" style="border-top:1px dashed #eee; margin-top:14px; padding-top:14px;">
+      <label class="inputLabel">刷免目标（金额填元，笔数填笔）</label>
+      <input class="field" name="waiverTarget" type="number" step="0.01" value="${f&&f.waiverTarget?(f.waiverType==='amount'?(f.waiverTarget/100).toFixed(2):f.waiverTarget):''}">
+      
+      <label class="inlineCheck" style="margin-top:10px"><input type="checkbox" name="useManual" ${f?.useManual?'checked':''}> 手动录入进度</label>
+      
+      <label class="inputLabel">专属标签过滤（选填）</label>
+      <input class="field" name="filterTag" maxlength="50" value="${E(f?.filterTag||'')}" placeholder="例如：副卡A">
+    </div>
+  </form>`, `<button class="btn" data-act="closeModal">取消</button><button class="btn blue" data-act="saveAnnualFee" data-id="${E(accId)}">保存</button>`);
+}
+
+function checkAnnualFeeReminders(){
+  const today = new Date(now()+'T12:00:00');
+  const remindList = (state.annualFees||[]).filter(f=>{
+  const period = getFeePeriod(f);
+  if (f.lastPaidYear === period.targetYear) return false; // 今年已经交过，过滤掉
+  const days = daysUntilFee(f);
+  return days >= 0 && days <= 15;
+});
+
+  if (remindList.length > 0) {
+    const rows = remindList.map(f=>{
+      const a = account(f.accountId);
+      const progress = calcFeeProgress(f);
+      let progressText = '';
+      if (f.waiverType === 'amount') progressText = `已刷 ${fmt(progress,a.currency)} / ${fmt(f.waiverTarget,a.currency)}`;
+      else if (f.waiverType === 'count') progressText = `已刷 ${progress} 笔 / ${f.waiverTarget} 笔`;
+      else if (f.waiverType === 'none') progressText = '刚性年费';
+      
+      return `<div style="border-bottom:1px solid #eef0f4;padding:10px 0">
+        <div style="font-weight:bold">${E(a.name)} - ${E(f.name)}</div>
+        <div class="smallHint">${f.feeMonth}月${f.feeDay}日即将收取 ${fmt(f.amount,a.currency)}</div>
+        <div class="smallHint" style="color:#d94b4b">${progressText}</div>
+      </div>`;
+    }).join('');
+    
+    setTimeout(()=>{
+      modal('年费缴纳提醒', `<div class="notice blueTint">以下信用卡即将收取年费，请注意查看是否已满足免年费条件：</div><div class="v41BatchList">${rows}</div>`, `<button class="btn blue" data-act="closeModal">我知道了</button>`);
+    }, 1000);
+  }
+}
 function rewardRulesFor(accountId){return (state.rewardRules||[]).filter(r=>r.accountId===accountId)}
 function renderAccountDetail(){const a=account(accountDetail);if(!a){accountDetail='';return renderAccounts()}const b=balance(a.id),monthly=state.transactions.filter(x=>x.date.startsWith(curMonth()));const inc=monthly.reduce((s,x)=>s+(x.type==='income'&&x.from===a.id?x.amount:0),0),out=monthly.reduce((s,x)=>s+(x.type==='expense'&&x.from===a.id?x.amount:0),0);const txs=state.transactions.filter(x=>x.from===a.id||x.to===a.id).sort(sortTx).slice(0,400);const p=poolById(a.poolId);
+const fees = (state.annualFees||[]).filter(f=>f.accountId===a.id);
+const feeBlock = fees.map(f => {
+  const progress = calcFeeProgress(f);
+  const days = daysUntilFee(f);
+  const period = getFeePeriod(f);
+  
+  let progressHtml = '';
+  if (f.waiverType === 'amount') {
+    const pct = Math.min(100, Math.round(progress / (f.waiverTarget||1) * 100));
+    progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">已刷 ${fmt(progress, a.currency)} / ${fmt(f.waiverTarget, a.currency)} ${f.useManual?'(手动)':''}</div><div class="barTrack" style="height:6px"><div class="barFill" style="width:${pct}%"></div></div>`;
+  } else if (f.waiverType === 'count') {
+    const pct = Math.min(100, Math.round(progress / (f.waiverTarget||1) * 100));
+    progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">已刷 ${progress} / ${f.waiverTarget} 笔 ${f.useManual?'(手动)':''}</div><div class="barTrack" style="height:6px"><div class="barFill" style="width:${pct}%"></div></div>`;
+  } else if (f.waiverType === 'none') {
+    progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px;color:#d94b4b">刚性年费</div>`;
+  } else {
+    progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">积分兑换免年费</div>`;
+  }
+
+  return `<div style="border-bottom:1px dashed #eef0f4;padding:8px 0;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <b style="font-size:13px">${E(f.name)}</b>
+      <span style="font-size:11px;color:#788492">${days >= 0 ? '还有'+days+'天' : '已过期'}</span>
+    </div>
+    <div style="font-size:11px;color:#a0a9b7;margin-top:2px">结算区间：${period.startStr.slice(5)} ~ ${period.endStr.slice(5)}</div>
+    ${progressHtml}
+        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;margin-top:10px;">
+      <button class="btn tiny" style="padding:6px 0;font-size:12px" data-act="editAnnualFee" data-id="${E(f.id)}">编辑</button>
+      <button class="btn tiny" style="padding:6px 0;font-size:12px" data-act="updateFeeProgress" data-id="${E(f.id)}">录入进度</button>
+      <button class="btn tiny" style="padding:6px 0;font-size:12px" data-act="payAnnualFee" data-id="${E(f.id)}">标记已免</button>
+      <button class="btn tiny warn" style="padding:6px 0;font-size:12px" data-act="deleteAnnualFee" data-id="${E(f.id)}">删除</button>
+    </div>
+  </div>`;
+}).join('');
+
+const feeCard = `<details class="card" style="margin-top:14px; padding:0; border-radius:21px; overflow:hidden; border:1px solid #e8ebf0; box-shadow:0 2px 12px #152b5107;">
+  <summary style="padding:14px 18px; background:#fff; display:flex; align-items:center; justify-content:space-between; cursor:pointer; font-weight:bold; color:#263344; font-size:15px; outline:none; list-style-type: none !important;">
+    <span>年费追踪</span>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <button type="button" class="btn tiny soft" data-act="newAnnualFee" data-id="${E(a.id)}" onclick="event.stopPropagation()" style="padding:4px 8px;font-size:12px"> 添加</button>
+      <span style="font-size:10px; color:#a0a9b7;">▼</span>
+    </div>
+  </summary>
+  <div style="padding: 4px 18px 18px 18px; border-top: 1px solid #eef0f4; background:#fff;">
+    ${fees.length ? feeBlock : '<div class="empty" style="padding:20px 0">尚未设置年费规则</div>'}
+  </div>
+</details>`;
 const rewardBlock=rewardRulesFor(a.id).map(r=>{
+ const isArchived = !!r.archived;
  const period = getPeriodRange(r);
- const net = rewardNet({...r, startDate: period.start, endDate: period.end});
+ const net = isArchived ? 0 : rewardNet({...r, startDate: period.start, endDate: period.end});
  const maxTarget=Math.max(...r.targets.map(t=>t.amount),1);
- const pct=Math.min(100,Math.round(net/maxTarget*100));
+ const pct=isArchived ? 0 : Math.min(100,Math.round(net/maxTarget*100));
  const marks=r.targets.map(t=>`<span style="position:absolute;left:${Math.min(100,t.amount/maxTarget*100)}%;top:-1px;width:2px;height:12px;background:#fff;box-shadow:0 0 3px rgba(0,0,0,0.4);z-index:2"></span>`).join('');
  const rows=r.targets.map((t,i)=>`<div class="kvline" style="${i===r.targets.length-1?'border-bottom:0':''}"><span>${E(t.label||('满'+fmt(t.amount,a.currency)))}</span><b class="${net>=t.amount?'positive':''}">${net>=t.amount?'✓ 已达成':'还差 '+fmt(t.amount-net,a.currency)}</b></div>`).join('');
- return `<div class="card settingsCard" style="margin-top:12px"><div class="sectionTitle" style="margin-top:0"><h2>${E(r.name)}</h2><span class="subtle">${r.cycle==='monthly'?'每月循环':'单次活动'}</span></div><div class="subtle" style="margin-bottom:10px">当前周期：${E(period.label)}</div><div class="barRow"><div class="barName"><span>已消费（扣退款及返现）</span><b>${fmt(net,a.currency)} / ${fmt(maxTarget,a.currency)}</b></div><div class="barTrack" style="position:relative">${marks}<div class="barFill" style="width:${pct}%"></div></div></div>${rows}<div class="settingsActions"><button class="btn tiny" data-act="editRewardRule" data-id="${E(r.id)}">编辑</button><button class="btn tiny warn" data-act="deleteRewardRule" data-id="${E(r.id)}">删除</button></div>${r.cycle === 'monthly' ? rewardHistoryBlock(r.id) : ''}</div>`
+  let contentHtml = '';
+ if (isArchived) {
+   contentHtml = `<div class="subtle" style="margin-bottom:10px;color:#a0a9b7">该规则已归档，停止追踪新进度。达成情况可查看下方历史记录。</div>`;
+ } else {
+   contentHtml = `<div class="subtle" style="margin-bottom:10px">当前周期：${E(period.label)}</div><div class="barRow"><div class="barName"><span>已消费（扣退款及返现）</span><b>${fmt(net,a.currency)} / ${fmt(maxTarget,a.currency)}</b></div><div class="barTrack" style="position:relative">${marks}<div class="barFill" style="width:${pct}%"></div></div></div>${rows}`;
+ }
+ return `<div class="card settingsCard" style="margin-top:12px; ${isArchived?'background:#f8f9fc;':''}"><div class="sectionTitle" style="margin-top:0"><h2>${E(r.name)} ${isArchived?'<small style="font-size:11px;color:#8c95a3;font-weight:normal">[已归档]</small>':''}</h2><span class="subtle">${r.cycle==='monthly'?'每月循环':'单次活动'}</span></div>${contentHtml}<div class="settingsActions"><button class="btn tiny" data-act="editRewardRule" data-id="${E(r.id)}">编辑</button><button class="btn tiny warn" data-act="deleteRewardRule" data-id="${E(r.id)}">删除</button></div>${r.cycle === 'monthly' ? rewardHistoryBlock(r.id) : ''}</div>`
 }).join('');
 
 let cc=a.kind==='credit'?`<details class="card" style="margin-top:14px; padding:0; border-radius:21px; overflow:hidden; border:1px solid #e8ebf0; box-shadow:0 2px 12px #152b5107;"><summary style="padding:14px 18px; background:#fff; display:flex; align-items:center; justify-content:space-between; cursor:pointer; font-weight:bold; color:#263344; font-size:15px; outline:none; list-style-type: none !important;"><span>信用卡额度</span><div style="display:flex; align-items:center; gap:10px;"><span style="font-size:12px; color:#718196; font-weight:normal; display:flex; flex-direction:column; align-items:flex-end; line-height:1.3;">已用 ${fmt(creditUsed(a),a.currency)}${isFinite(creditAvailable(a))?'<br>可用 '+fmt(creditAvailable(a),a.currency):''}</span><span style="font-size:10px; color:#a0a9b7;">▼</span></div></summary><div style="padding: 0 18px 18px 18px; border-top: 1px solid #eef0f4; background:#fff;">
-<div class="kvline" style="margin-top:10px"><span>当前欠款</span><b>${fmt(Math.max(0,-b),a.currency)}</b>${b>0?`<small class="positive"> 溢缴 ${fmt(b,a.currency)}</small>`:''}</div>
+<div class="kvline" style="margin-top:10px"><span>当前欠款</span><b>${fmt(Math.max(0,-b),a.currency)}</b>${b>0?`<span style="color:#d94b4b;font-size:15px;margin-left:6px;font-weight:bold"> 溢缴 ${fmt(b,a.currency)}</span>`:''}</div>
 <div class="kvline"><span>已用额度</span><b>${fmt(creditUsed(a),a.currency)}</b></div>
 <div class="kvline"><span>${p?'共享额度池':'信用额度'}</span><b>${p?E(p.name):(a.cardLimit?fmt(a.cardLimit,a.currency):'未设置')}</b></div>
 ${p?`<div class="kvline"><span>额度池可用</span><b>${fmt(p.limit-poolUsed(p),p.currency)}</b>${p.currency!==a.currency?`<small class="positive"> (按汇率折算)</small>`:''}</div>`:''}
@@ -608,10 +942,10 @@ ${(a.cardLimit||p)?`<div class="kvline"><span>当前可用额度</span><b>${fmt(
   return a.payDay+'日';
 })()}</b></div>
 </div></details>`:'';
-return `<div class="backRow"><button class="linkStyle" data-act="backAccounts">${ic('left')} 返回账户</button><button class="btn tiny soft" data-act="accountActions" data-id="${E(a.id)}"> 账户操作</button></div><div class="detailHead v41DetailHead" data-v41-theme="${E(a.id)}" style="${v41GradientStyle(a)}"><div class="detailIdentity"><span class="accountIcon ${colors(a.id)}">${accountIconContent(a)}</span><div class="name">${E(a.name)}</div></div><div class="subtle" style="margin-top:5px">${E(a.currency)} · ${E(a.kind==='credit'?'信用卡':a.kind==='wallet'?'钱包':a.kind==='loan'?'贷款':'个人账户')}${a.includeInWealth===false?' · 不计入资产负债统计':''}</div><div class="balance">${fmt(b,a.currency)}</div><div class="miniStats"><span>本月收入 <b class="positive">+${fmt(inc,a.currency)}</b></span><span>本月支出 <b>${fmt(out,a.currency)}</b></span></div></div><div class="toolbar accountToolbar">
+return `<div class="backRow"><button class="linkStyle" data-act="backAccounts">${ic('left')} 返回账户</button><button class="btn tiny soft" data-act="accountActions" data-id="${E(a.id)}"> 账户操作</button></div><div class="detailHead v41DetailHead" data-v41-theme="${E(a.id)}" style="${v41GradientStyle(a)}"><div class="detailIdentity"><span class="accountIcon ${colors(a.id)}">${accountIconContent(a)}</span><div class="name">${E(a.name)}</div></div><div class="subtle" style="margin-top:5px">${E(a.currency)} · ${E(a.kind==='credit'?'信用卡':a.kind==='wallet'?'钱包':a.kind==='loan'?'贷款':'个人账户')}${a.includeInWealth===false?' · 不计入资产负债统计':''}</div><div class="balance" style="color:${b>0?'#d94b4b':b<0?'#269b62':'#1d2330'}">${fmt(b,a.currency)}</div><div class="miniStats"><span>本月收入 <b style="color:#d94b4b">+${fmt(inc,a.currency)}</b></span><span>本月支出 <b style="color:#269b62">${fmt(out,a.currency)}</b></span></div></div><div class="toolbar accountToolbar">
 <button class="btn soft" data-act="newTx" data-id="${E(a.id)}">记一笔</button>
 <button class="btn soft" data-act="searchAccountTx" data-id="${E(a.id)}">查交易</button>
-</div>${rewardRulesFor(a.id).length?`<div class="sectionTitle"><h2>消费奖励</h2><button class="btn tiny soft" data-act="newRewardRule" data-id="${E(a.id)}">＋ 新增规则</button></div>${rewardBlock}`:`<div class="sectionTitle"><h2>消费奖励</h2><button class="btn tiny soft" data-act="newRewardRule" data-id="${E(a.id)}">＋ 新增规则</button></div><div class="notice blueTint">尚未设置消费奖励规则。可设置起止日期、目标档位和统计分类。</div>`}${cc?`<div style="margin-top:14px">${cc}</div>`:''}<div class="sectionTitle"><h2>交易流水</h2><span class="subtle">${txs.length} 笔</span></div><div class="card">${txs.length?txs.map(x=>txRow(x,a.id)).join(''):'<div class="empty">暂无交易记录</div>'}</div>`}
+</div>${rewardRulesFor(a.id).length?`<div class="sectionTitle"><h2>消费奖励</h2><button class="btn tiny soft" data-act="newRewardRule" data-id="${E(a.id)}">新增规则</button></div>${rewardBlock}`:`<div class="sectionTitle"><h2>消费奖励</h2><button class="btn tiny soft" data-act="newRewardRule" data-id="${E(a.id)}">新增规则</button></div><div class="notice blueTint">尚未设置消费奖励规则。可设置起止日期、目标档位和统计分类。</div>`}${cc?`<div style="margin-top:14px">${cc}</div>`:''}${a.kind==='credit'?feeCard:''}<div class="sectionTitle"><h2>交易流水</h2><span class="subtle">${txs.length} 笔</span></div><div class="card">${txs.length?txs.map(x=>txRow(x,a.id)).join(''):'<div class="empty">暂无交易记录</div>'}</div>`}
 
 function txLabel(x){if(x.type==='transfer')return '账户转账';if(x.type==='loan_repayment')return '贷款还款';if(x.type.startsWith('transfer_'))return '转账记录';return x.description||x.category||({income:'收入',expense:'支出',refund:'退款',adjustment:'余额调整'})[x.type]||'交易'}
 function sortTx(a,b){return (b.date+' '+(b.time||'')).localeCompare(a.date+' '+(a.time||''))||String(b.created||'').localeCompare(String(a.created||''))}
@@ -648,7 +982,17 @@ function dateMatch(day,p){return p.op==='exact'?day===p.a:p.op==='after'?day>p.a
 function txCategories(x){return [x.category,...(x.splits||[]).map(s=>s.category)].filter(Boolean)}
 function matchesSelectedCategory(x,selected){return txCategories(x).some(cat=>selected.some(v=>cat===v||cat.startsWith(v+'/')||cat.startsWith(v+' → ')||cat.startsWith(v+'>')))}
 function filtered(){const f=filter;const quick=parseQuick(f.q);const threshold=Number(f.amountValue);const advCents=f.amountOp!=='any'&&f.amountValue!==''&&Number.isFinite(threshold)&&threshold>=0?Math.round(threshold*100):null;
- return state.transactions.filter(x=>{
+  return state.transactions.filter(x=>{
+  if(filter.jumpType){
+    if(filter.jumpType==='cashback' && !(x.type==='income'&&(x.category==='银行返现'||(x.tags||[]).includes('信用卡返现')))) return false;
+    if(filter.jumpType==='discount' && !(x.type==='expense'&&x.discount>0)) return false;
+    if(filter.jumpType==='loan_principal' && !(x.type==='loan_repayment'&&x.principal>0)) return false;
+    if(filter.jumpType==='loan_interest' && !(x.type==='loan_repayment'&&x.interest>0)) return false;
+    if(filter.jumpType==='loan_fee' && !(x.type==='loan_repayment'&&x.loanFee>0)) return false;
+    if(filter.jumpType==='transfer_discount' && !(x.type==='transfer'&&x.transferDeltaKind==='discount')) return false;
+    if(filter.jumpType==='transfer_fee' && !(x.type==='transfer'&&x.transferDeltaKind==='fee')) return false;
+    if(filter.jumpType==='transfer_other' && !(x.type==='transfer'&&x.transferDeltaKind==='other')) return false;
+  }
   if(ledgerScope&&x.from!==ledgerScope&&x.to!==ledgerScope)return false;
   if(!ledgerScope&&f.accounts.length&&!f.accounts.some(a=>x.from===a||x.to===a))return false;
   if(f.types.length&&!f.types.includes(txSearchType(x)))return false;
@@ -664,20 +1008,38 @@ function filtered(){const f=filter;const quick=parseQuick(f.q);const threshold=N
   return quick.text.every(word=>str.includes(word))
  }).sort(sortTx)}
 function ledgerSummary(list){
- const rows=new Map();const accountId=ledgerScope||(filter.accounts.length===1?filter.accounts[0]:'');
- for(const x of list){const a=account(accountId||x.from);if(!a)continue;const cur=a.currency||'CNY';const v=rows.get(cur)||{count:0,gross:0,income:0,expense:0,refund:0,transfer:0,adjustment:0,balanceDelta:0};let actual=accountId?delta(x,accountId):txSigned(x);
- v.count++;v.gross+=Math.abs(accountId?actual:x.amount);
- if(x.type==='income')v.income+=x.amount;
- else if(x.type==='expense')v.expense+=x.amount;
- else if(x.type==='refund')v.refund+=x.amount;
- else if(x.type==='loan_repayment')v.expense+=x.interest+x.loanFee;
-  else if(x.type==='transfer'){v.transfer+=(accountId?actual:0);if(x.transferDeltaKind==='fee'&&account(x.from)?.currency===account(x.to)?.currency&&x.amount>x.toAmount)v.expense+=x.amount-x.toAmount;}
-  else if(x.type.startsWith('transfer'))v.transfer+=(accountId?actual:0);
- else if(x.type==='adjustment')v.adjustment+=(accountId?actual:0);
- if(accountId)v.balanceDelta+=actual;rows.set(cur,v)
- }
- if(!rows.size)return '<div class="notice blueTint">当前筛选没有匹配交易，合计为零。</div>';
- return [...rows.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([cur,v])=>{const net=v.income-v.expense+v.refund;const cell=(label,value,cls='')=>`<div class="ledgerTotal"><small>${label}</small><b class="${cls}">${fmt(value,cur,true)}</b></div>`;return `<section><h3>${E(cur)} · ${v.count} 笔</h3><div class="ledgerTotalGrid">${cell('收入合计',v.income,'plus')}${cell('支出合计',-v.expense,'minus')}${cell('退款合计',v.refund,'plus')}${cell('净收支（不含转账）',net,'net')}${accountId?cell('该账户余额变化（含转账、调整）',v.balanceDelta,'net'):''}</div></section>`}).join('')+'<p class="smallHint">汇总全部匹配交易，包括列表未显示的部分；转账与余额调整不计入净收支。不同币种分别统计，金额筛选使用各交易账户币种。若选多账户，跨账户转账在结果中只计一笔。</p>'
+  const accountId=ledgerScope||(filter.accounts.length===1?filter.accounts[0]:'');
+  let v={count:0,gross:0,income:0,expense:0,refund:0,transfer:0,adjustment:0,balanceDelta:0};
+  
+  for(const x of list){
+    const a=account(accountId||x.from);
+    if(!a)continue;
+    const cur=a.currency||'CNY';
+    const rate=cur==='CNY'?1:(Number(state.fxRates?.[cur])||1);
+    
+    let actual=accountId?delta(x,accountId):txSigned(x);
+    v.count++;
+    v.gross+=Math.round(Math.abs(accountId?actual:x.amount)*rate);
+    
+    if(x.type==='income')v.income+=Math.round(x.amount*rate);
+    else if(x.type==='expense')v.expense+=Math.round(x.amount*rate);
+    else if(x.type==='refund')v.refund+=Math.round(x.amount*rate);
+    else if(x.type==='loan_repayment')v.expense+=Math.round((x.interest+x.loanFee)*rate);
+    else if(x.type==='transfer'){
+      v.transfer+=(accountId?Math.round(actual*rate):0);
+      if(x.transferDeltaKind==='fee'&&account(x.from)?.currency===account(x.to)?.currency&&x.amount>x.toAmount)v.expense+=Math.round((x.amount-x.toAmount)*rate);
+    }
+    else if(x.type.startsWith('transfer'))v.transfer+=(accountId?Math.round(actual*rate):0);
+    else if(x.type==='adjustment')v.adjustment+=(accountId?Math.round(actual*rate):0);
+    
+    if(accountId)v.balanceDelta+=Math.round(actual*rate);
+  }
+  
+  if(v.count===0)return '<div class="notice blueTint">当前筛选没有匹配交易，合计为零。</div>';
+  const net=v.income-v.expense+v.refund;
+  const cell=(label,value,cls='')=>`<div class="ledgerTotal"><small>${label}</small><b class="${cls}">${fmt(value,'CNY',true)}</b></div>`;
+  
+  return `<section><h3>CNY 折算 · ${v.count} 笔</h3><div class="ledgerTotalGrid">${cell('收入合计',v.income,'plus')}${cell('支出合计',-v.expense,'minus')}${cell('退款合计',v.refund,'plus')}${cell('净收支（不含转账）',net,'net')}${accountId?cell('该账户余额变化（含转账、调整）',v.balanceDelta,'net'):''}</div></section><p class="smallHint">汇总全部匹配交易，金额已统一按汇率折算为人民币；转账与余额调整不计入净收支。若选多账户，跨账户转账在结果中只计一笔。</p>`;
 }
 const txTypes=[['income','收入'],['expense','支出'],['transfer','转账'],['loan_repayment','贷款还款'],['refund','退款'],['adjustment','余额调整']];
 function searchSelectedAccount(){return ledgerScope||(filter.accounts.length===1?filter.accounts[0]:'')}
@@ -685,36 +1047,54 @@ function selectorChecklist(which,list,selected,desc){return `<details class="adv
 function categoryFilterOptions(){const items=new Set(state.customCategories||[]);for(const x of state.transactions){if(x.category)items.add(x.category);for(const s of x.splits||[])if(s.category)items.add(s.category)}return [...items].sort((a,b)=>a.localeCompare(b,'zh-CN')).map(x=>[x,x])}
 function tagFilterOptions(){return [...new Set(state.transactions.flatMap(x=>x.tags||[]))].sort((a,b)=>a.localeCompare(b,'zh-CN')).map(x=>[x,x])}
 function accountSelectorChecklist(selected){
-  const groups={};
-  for(const a of state.accounts){
-    const g=a.group||'未分组';
-    if(!groups[g]) groups[g]=[];
-    groups[g].push(a);
-  }
-  let html='';
-  const allGroups = groupNames();
-  const sortedGroupKeys = Object.keys(groups).sort((a,b)=>{
-    const ai=allGroups.indexOf(a), bi=allGroups.indexOf(b);
-    return ai>=0&&bi>=0?ai-bi:ai>=0?-1:bi>=0?1:!a?1:!b?-1:a.localeCompare(b,'zh-CN');
+  let html = `<div style="margin-bottom:8px"><input type="text" class="field" placeholder="搜索账户..." oninput="this.nextElementSibling.querySelectorAll('.advCheck').forEach(el=>el.style.display=el.textContent.toLowerCase().includes(this.value.toLowerCase())?'flex':'none')"></div>`;
+  html += `<div style="max-height:250px;overflow-y:auto;">`;
+  
+  // 按分组顺序展示
+  const sortedGroups = (state.accountGroups||[]).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  
+  sortedGroups.forEach(g => {
+    const groupAccs = state.accounts.filter(a=>a.groupId===g.id);
+    if(groupAccs.length > 0) {
+      const allChecked = groupAccs.every(a => selected.includes(a.id));
+      html += `<div style="margin-top:8px;font-weight:650;font-size:13px;color:#344b69;display:flex;align-items:center;gap:8px;border-bottom:1px solid #eef0f4;padding-bottom:4px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;width:100%">
+          <input type="checkbox" data-group-check="${E(g.name)}" ${allChecked?'checked':''} style="width:16px;height:16px;accent-color:#238af6"> 📁 ${E(g.name)}
+        </label>
+      </div>`;
+      
+      // 组内使用 sortedAccounts 排序
+      sortedAccounts(groupAccs).forEach(a => {
+        html += `<label class="advCheck" style="padding-left:20px"><input type="checkbox" data-filter-account="${E(a.id)}" data-group-member="${E(g.name)}" ${selected.includes(a.id)?'checked':''}><span>${E(a.name)} · ${E(a.currency)}</span></label>`;
+      });
+    }
   });
 
-  for(const gName of sortedGroupKeys){
-    const accs=groups[gName];
-    const ids=accs.map(a=>a.id);
-    const allChecked=ids.every(id=>selected.includes(id));
-    html+=`<div style="margin-top:8px;font-weight:650;font-size:13px;color:#344b69;display:flex;align-items:center;gap:8px;border-bottom:1px solid #eef0f4;padding-bottom:4px"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-group-check="${E(gName)}" ${allChecked?'checked':''} style="width:16px;height:16px;accent-color:#238af6"> ${E(gName)}</label></div>`;
-    for(const a of accs){
-      html+=`<label class="advCheck" style="padding-left:20px"><input type="checkbox" data-filter-account="${E(a.id)}" data-group-member="${E(gName)}" ${selected.includes(a.id)?'checked':''}><span>${E(a.name)} · ${E(a.currency)}</span></label>`;
-    }
+  // 未分组账户
+  const ungrouped = state.accounts.filter(a => !a.groupId);
+  if(ungrouped.length > 0) {
+    const allChecked = ungrouped.every(a => selected.includes(a.id));
+    html += `<div style="margin-top:8px;font-weight:650;font-size:13px;color:#344b69;display:flex;align-items:center;gap:8px;border-bottom:1px solid #eef0f4;padding-bottom:4px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;width:100%">
+        <input type="checkbox" data-group-check="未分组" ${allChecked?'checked':''} style="width:16px;height:16px;accent-color:#238af6"> 📁 未分组
+      </label>
+    </div>`;
+    sortedAccounts(ungrouped).forEach(a => {
+      html += `<label class="advCheck" style="padding-left:20px"><input type="checkbox" data-filter-account="${E(a.id)}" data-group-member="未分组" ${selected.includes(a.id)?'checked':''}><span>${E(a.name)} · ${E(a.currency)}</span></label>`;
+    });
   }
-  return `<details class="advDetails"><summary>账户（可多选）${selected.length?' · 已选 '+selected.length+' 项':''}</summary><div class="advOptions">${html||'<span class="smallHint">暂无可选项</span>'}</div></details>`;
+  html += `</div>`;
+  
+  return `<details class="advDetails"><summary>账户（可多选）${selected.length?' · 已选 '+selected.length+' 项':''}</summary><div class="advOptions">${html}</div></details>`;
 }
-
 function advancedForm(){const f=filter;if(!f.advanced)return '<div class="advPanel" id="advancedFields" hidden></div>';const cat=categoryFilterOptions(),tags=tagFilterOptions();return `<div class="advPanel" id="advancedFields" ${f.advanced?'':'hidden'}><div class="advRow"><div><label class="inputLabel">金额比较</label><select class="field" id="advAmountOp">${[['any','不限'],['gt','大于 >'],['lt','小于 <'],['eq','等于 ='],['approx','约等于 ~（±10%，至少1元）']].map(([v,t])=>`<option value="${v}" ${f.amountOp===v?'selected':''}>${t}</option>`).join('')}</select></div><div><label class="inputLabel">金额（按账户原币种）</label><input class="field" id="advAmountValue" type="number" inputmode="decimal" step="0.01" min="0" placeholder="例如 100" value="${E(f.amountValue)}"></div></div><div class="advRow"><div><label class="inputLabel">日期条件</label><select class="field" id="advDateOp">${[['any','不限'],['exact','精确日期'],['after','此日期之后（不含当天）'],['before','此日期之前（不含当天）'],['range','日期范围（含首尾）']].map(([v,t])=>`<option value="${v}" ${f.dateOp===v?'selected':''}>${t}</option>`).join('')}</select></div><div><label class="inputLabel">日期</label><input class="field" id="advDateStart" type="date" value="${E(f.dateStart)}"></div></div><div id="advDateEndWrap" ${f.dateOp==='range'?'':'hidden'}><label class="inputLabel">结束日期（含当天）</label><input class="field" id="advDateEnd" type="date" value="${E(f.dateEnd)}"></div><p class="smallHint">高级金额、日期条件与搜索框内容同时生效；不同条件需全部满足。</p>${!ledgerScope?accountSelectorChecklist(f.accounts):''}${selectorChecklist('type',txTypes,f.types,'交易类型（可多选）')}${selectorChecklist('category',cat,f.categories,'分类（可多选）')}${selectorChecklist('tag',tags,f.tags,'标签（可多选）')}</div>`}
 function renderLedger(){const l=filtered(), f=filter,accountId=searchSelectedAccount(),isAccount=!!ledgerScope;
 const groupOptions=(state.accountGroups||[]).map(g=>`<option value="group:${E(g.id)}" ${f.accounts.length===1&&f.accounts[0]==='group:'+g.id?'selected':''}>分组：${E(g.name)}</option>`).join('');
 const accOptions=state.accounts.map(a=>`<option value="${E(a.id)}" ${f.accounts.length===1&&f.accounts[0]===a.id?'selected':''}>${E(a.name)}</option>`).join('');
-const options=groupOptions+accOptions;return `${isAccount?`<div class="backRow"><button class="linkStyle" data-act="backFromAccountSearch">${ic('left')} 返回 ${E(aName(ledgerScope))}</button><button class="btn tiny" data-act="toGlobalSearch">全部交易</button></div>`:''}<div class="sectionTitle" style="margin-top:0"><h2>${isAccount?'账户交易搜索':'全部交易'}</h2><span class="subtle" id="ledgerCount">共 ${l.length} 笔</span></div>${isAccount?`<div class="notice blueTint">当前仅搜索「${E(aName(ledgerScope))}」的交易；信用卡还款属于转账，不计收入。</div>`:''}<div class="toolbar ledgerToolbar"><input class="sbox" type="search" id="searchQ" placeholder="描述、备注、商户、分类、标签；可输入 >100 / 2026/11/01-2026/11/15" value="${E(f.q)}" autocomplete="off">${isAccount?'':`<select id="ledgerAccount" aria-label="快捷选择账户"><option value="">${f.accounts.length>1?'已选多个账户':'全部账户'}</option>${options}</select>`}<input id="ledgerMonth" type="month" value="${E(f.month)}" aria-label="月份筛选"></div><div class="searchQuickTypes" id="quickTypes">${[['','全部'],...txTypes].map(([v,label])=>`<button type="button" data-act="quickType" data-id="${v||'_all'}" class="quickType ${(!v&&!f.types.length)||(v&&f.types.length===1&&f.types[0]===v)?'on':''}">${label}</button>`).join('')}</div><div class="searchActions"><button class="btn tiny" data-act="toggleAdvanced" aria-expanded="${f.advanced}">高级筛选${f.advanced?' ▴':' ▾'}</button><button class="btn tiny" data-act="resetSearch">清除所有筛选</button><button class="btn tiny ${ledgerBatchMode?'blue':''}" data-act="toggleBatchMode">${ledgerBatchMode?'退出批量':'批量操作'}</button><span class="subtle">多关键词默认同时匹配</span></div>${ledgerBatchMode?`<div class="notice blueTint" style="display:flex;justify-content:space-between;align-items:center;margin:10px 0"><span>已选择 <b>${selectedTxIds.length}</b> 笔交易</span><button class="btn tiny blue" data-act="batchUpdateCategory">修改分类</button></div>`:''}${advancedForm()}<div class="notice blueTint" style="margin:12px 0">快捷语法：<b>&gt;100</b>、<b>&lt;50</b>、<b>=75</b>、<b>~200</b>；<b>2026/11/15</b>、<b>&gt;2026/11/15</b>、<b>&lt;2026/11/15</b>、<b>2026/11/01-2026/11/15</b>。可输入「瑞幸 &gt;100 2026/11/01-2026/11/15」组合查询。</div><div class="ledgerTotals" id="ledgerTotals">${ledgerSummary(l)}</div><div class="card" id="ledgerResults">${l.length?l.slice(0,500).map(x=>txRow(x,accountId)).join(''):'<div class="empty">没有找到匹配的交易记录</div>'}${l.length>500?'<div class="empty">只显示最新500笔，请使用搜索缩小范围。</div>':''}</div>`}
+const options=groupOptions+accOptions;return `${isAccount?`<div class="backRow"><button class="linkStyle" data-act="backFromAccountSearch">${ic('left')} 返回 ${E(aName(ledgerScope))}</button><button class="btn tiny" data-act="toGlobalSearch">全部交易</button></div>`:''}${filter.jumpLabel ? `<div class="notice blueTint" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span>正在查看：<b>${E(filter.jumpLabel)}</b> (时间范围：${E(filter.dateStart)} 至 ${E(filter.dateEnd)})</span><button class="btn tiny" data-act="clearJumpFilter">查看全部流水</button></div>` : ''}<div class="sectionTitle" style="margin-top:0"><h2>${isAccount?'账户交易搜索':'全部交易'}</h2><span class="subtle" id="ledgerCount">共 ${l.length} 笔</span></div>${isAccount?`<div class="notice blueTint">当前仅搜索「${E(aName(ledgerScope))}」的交易；信用卡还款属于转账，不计收入。</div>`:''}<div class="toolbar ledgerToolbar"><input class="sbox" type="search" id="searchQ" placeholder="描述、备注、商户、分类、标签；可输入 >100 / 2026/11/01-2026/11/15" value="${E(f.q)}" autocomplete="off">${isAccount?'':`<button type="button" class="field" data-act="openLedgerAccountPicker" style="text-align:left;display:flex;justify-content:space-between;align-items:center;min-height:48px;padding:11px 13px;background:white;color:#344052;font-size:14px;flex:2;max-width:200px">
+  <span>${f.accounts.length>1?'已选多个账户':(f.accounts.length===1?aName(f.accounts[0]):'全部账户')}</span>
+  <span style="color:#7d93aa"></span>
+</button>`}<input id="ledgerMonth" type="month" value="${E(f.month)}" aria-label="月份筛选"></div><div class="searchQuickTypes" id="quickTypes">${[['','全部'],...txTypes].map(([v,label])=>`<button type="button" data-act="quickType" data-id="${v||'_all'}" class="quickType ${(!v&&!f.types.length)||(v&&f.types.length===1&&f.types[0]===v)?'on':''}">${label}</button>`).join('')}</div><div class="searchActions"><button class="btn tiny" data-act="toggleAdvanced" aria-expanded="${f.advanced}">高级筛选${f.advanced?' ▴':' ▾'}</button><button class="btn tiny" data-act="resetSearch">清除所有筛选</button><button class="btn tiny ${ledgerBatchMode?'blue':''}" data-act="toggleBatchMode">${ledgerBatchMode?'退出批量':'批量操作'}</button><span class="subtle">多关键词默认同时匹配</span></div>${ledgerBatchMode?`<div class="notice blueTint" style="display:flex;justify-content:space-between;align-items:center;margin:10px 0"><span>已选择 <b>${selectedTxIds.length}</b> 笔交易</span><button class="btn tiny blue" data-act="batchUpdateCategory">修改分类</button></div>`:''}${advancedForm()}<div class="notice blueTint" style="margin:12px 0">快捷语法：<b>&gt;100</b>、<b>&lt;50</b>、<b>=75</b>、<b>~200</b>；<b>2026/11/15</b>、<b>&gt;2026/11/15</b>、<b>&lt;2026/11/15</b>、<b>2026/11/01-2026/11/15</b>。可输入「瑞幸 &gt;100 2026/11/01-2026/11/15」组合查询。</div><div class="ledgerTotals" id="ledgerTotals">${ledgerSummary(l)}</div><div class="card" id="ledgerResults">${l.length?l.slice(0,500).map(x=>txRow(x,accountId)).join(''):'<div class="empty">没有找到匹配的交易记录</div>'}${l.length>500?'<div class="empty">只显示最新500笔，请使用搜索缩小范围。</div>':''}</div>`}
 function refreshFilterLabels(){const quick=$('quickTypes');if(quick)quick.querySelectorAll('button').forEach(btn=>{const ty=btn.dataset.id==='\u005fall'?'':btn.dataset.id;btn.classList.toggle('on',ty?filter.types.length===1&&filter.types[0]===ty:!filter.types.length)});
  const s=$('ledgerAccount');if(s)s.value=filter.accounts.length===1?filter.accounts[0]:'';
  $('advancedFields')?.querySelectorAll('details.advDetails').forEach(d=>{let n=d.querySelectorAll('input:checked').length;const summary=d.querySelector('summary');if(summary){let original=summary.textContent.replace(/ · 已选 \d+ 项$/,'');summary.textContent=original+(n?' · 已选 '+n+' 项':'')}})
@@ -746,7 +1126,7 @@ function renderReports(){
 <div class="settingsActions" style="margin-bottom:12px"><button class="btn tiny ${isToday?'blue':''}" data-act="reportQuickDate" data-id="today">今日</button><button class="btn tiny ${isThisMonth?'blue':''}" data-act="reportQuickDate" data-id="month">本月</button><button class="btn tiny ${isThisYear?'blue':''}" data-act="reportQuickDate" data-id="year">今年</button></div>
 <div class="flexFields" style="margin-bottom:12px"><div><input class="field" type="date" id="reportDateStart" value="${E(reportDateStart)}" style="min-height:40px;padding:8px 12px"></div><div><input class="field" type="date" id="reportDateEnd" value="${E(reportDateEnd)}" style="min-height:40px;padding:8px 12px"></div></div>
 <div class="summaryTriplet"><div class="miniCard"><small>收入</small><b style="color:#d94b4b">${fmt(inc,currency)}</b></div><div class="miniCard"><small>实际支出</small><b style="color:#269b62">${fmt(out,currency)}</b></div><div class="miniCard"><small>结余</small><b style="color:${(inc-out)>=0?'#d94b4b':'#269b62'}">${fmt(inc-out,currency)}</b></div></div>
-<div class="summaryTriplet"><div class="miniCard"><small>银行返现</small><b style="color:#d94b4b">${fmt(list.filter(x=>x.type==='income'&&(x.category==='银行返现'||(x.tags||[]).includes('信用卡返现'))).reduce((s,x)=>s+x.amount,0),currency)}</b></div><div class="miniCard"><small>立减优惠</small><b style="color:#d94b4b">${fmt(discount,currency)}</b></div><div class="miniCard"><small>实际支付</small><b style="color:#269b62">${fmt(out,currency)}</b></div></div>
+<div class="summaryTriplet"><div class="miniCard" data-act="jumpToDetail" data-id="cashback"><small>银行返现</small><b style="color:#d94b4b">${fmt(list.filter(x=>x.type==='income'&&(x.category==='银行返现'||(x.tags||[]).includes('信用卡返现'))).reduce((s,x)=>s+x.amount,0),currency)}</b></div><div class="miniCard" data-act="jumpToDetail" data-id="discount"><small>立减优惠</small><b style="color:#d94b4b">${fmt(discount,currency)}</b></div><div class="miniCard"><small>退款</small><b style="color:#d94b4b">${fmt(list.filter(x=>x.type==='refund').reduce((s,x)=>s+x.amount,0),currency)}</b></div></div>
 <div class="card settingsCard"><div class="sectionTitle" style="margin-top:0"><h2>实际支出分类</h2><span class="subtle">${ranked.length} 类</span></div>${ranked.length?ranked.map(([c,v])=>`<div class="barRow"><div class="barName"><span>${E(c)}</span><b>${fmt(v,currency)}</b></div><div class="barTrack"><div class="barFill" style="width:${Math.min(100,Math.round(v/ranked[0][1]*100))}%"></div></div></div>`).join(''):'<div class="empty">该时间段暂无支出</div>'}</div>
 <div class="card settingsCard" style="margin-top:14px"><h3>净资产（纳入统计的账户）</h3><div class="mainNumber" style="font-size:27px">${wealth.complete?fmt(netAll,'CNY'):'—'}</div><p class="smallHint">仅汇总各账户编辑页开启“纳入资产负债统计”的账户。首页隐藏但仍纳入的账户也参与计算。${missing.length?'缺少 '+E(missing.join('、'))+' 的人民币汇率，暂不显示完整合计。':''}</p></div>
 <div class="notice blueTint" style="margin-top:15px">收入中的银行返现仍按普通收入统计；立减优惠仅统计支付时直接减免的金额。退款只调整账户余额。</div>`;
@@ -856,7 +1236,7 @@ function viewTx(id){
  const attachments=(x.attachments||[]).map(z=>`<details class="attachmentChip"><summary>📎 ${E(z.name)} · 查看图片</summary><img src="${E(z.data)}" alt="${E(z.name)}" style="max-width:100%;max-height:250px;object-fit:contain;margin-top:8px"></details>`).join('');
  if(x.type==='loan_repayment'){fields.push(['偿还本金',fmt(x.principal,cur)],['支付利息',fmt(x.interest,cur)],['其他费用',fmt(x.loanFee,cur)]);}if(x.type==='transfer'&&account(x.from)?.currency===account(x.to)?.currency&&x.amount!==x.toAmount){fields.push(['转账差额',`${x.transferDeltaKind==='discount'?'优惠':x.transferDeltaKind==='fee'?'手续费':'其他差额'} ${fmt(Math.abs(x.toAmount-x.amount),cur)}`]);}
  const actions=x.type==='adjustment'?`<button class="btn warn" data-act="deleteTx">删除调整记录</button>`:
- `<div class="operationGrid"><button class="btn soft" data-act="editTx" data-id="${E(x.id)}">✎ 修改</button><button class="btn" data-act="copyTx" data-id="${E(x.id)}" ${x.type.startsWith('transfer_')?'disabled title="导入的单边转账不提供复制"':''}>⧉ 复制</button>${x.type==='expense'?`<button class="btn soft" data-act="refundTx" data-id="${E(x.id)}">↩ 发起退款</button>`:'<button class="btn" disabled>↩ 退款仅适用于支出</button>'}<button class="btn warn" data-act="deleteTx">删除交易</button></div>`;
+ `<div class="operationGrid"><button class="btn soft" data-act="editTx" data-id="${E(x.id)}">修改</button><button class="btn" data-act="copyTx" data-id="${E(x.id)}" ${x.type.startsWith('transfer_')?'disabled title="导入的单边转账不提供复制"':''}>复制</button>${x.type==='expense'?`<button class="btn soft" data-act="refundTx" data-id="${E(x.id)}">退款</button>`:'<button class="btn" disabled>退款仅适用于支出</button>'}<button class="btn warn" data-act="deleteTx">删除</button></div>`;
  modal('交易详情',`<div class="operationHeader"><b>${E(txLabel(x))}</b><span class="operationAmount">${E(fmt(x.type==='transfer'?x.amount:txSigned(x),cur,true))}</span></div><div class="operationSection">${fields.map(([k,v])=>`<div class="kvline"><span>${E(k)}</span><b>${E(v)}</b></div>`).join('')}</div>${attachments}${actions}<p class="smallHint">复制交易会新建一笔独立记录，日期默认今天；退款只在原账户新增一笔正向交易，不改变原交易或账单归属。</p>`,`<button class="btn" data-act="closeModal">关闭</button>`);
 }
 function accountActions(id){
@@ -875,7 +1255,7 @@ function accountActions(id){
 }
 
 function txForm(id='',pref='',template=null){const loanCandidate=state.transactions.find(t=>t.id===id)||template;if(loanCandidate?.type==='loan_repayment'){v41LoanForm(id,pref,template);return}const existing=state.transactions.find(t=>t.id===id);const x=existing||template;editing=id;editKind='tx';txType=x?x.type:'expense';let accountId=x?.from||pref||accountDetail||state.accounts[0]?.id||'';let acc=account(accountId);const options=(choose='')=>state.accounts.map(a=>`<option value="${E(a.id)}" ${choose===a.id?'selected':''}>${E(a.name)}（${E(a.currency)}）</option>`).join('');const isTransfer=txType==='transfer';let tags=(x?.tags||[]).join(', ');let files=(x?.attachments||[]).map((f,i)=>`<div class="attachmentChip" data-index="${i}"><details style="flex:1;min-width:0"><summary>📎 ${E(f.name)} · 查看</summary><img src="${E(f.data)}" alt="${E(f.name)}" style="width:100%;max-height:320px;object-fit:contain;margin-top:9px;border-radius:8px"></details><button type="button" class="btn tiny warn" data-act="removeAttachment" data-id="${i}">移除</button></div>`).join('');
-modal(existing?'编辑交易':template?'复制 / 退款交易':'新增交易',`<form id="txForm"><div class="choiceTabs" id="txTabs"><button type="button" class="${txType==='expense'?'active':''}" data-txtype="expense">支出</button><button type="button" class="${txType==='income'?'active':''}" data-txtype="income">收入</button><button type="button" class="${txType==='transfer'?'active':''}" data-txtype="transfer">转账</button><button type="button" class="${txType==='loan_repayment'?'active':''}" data-act="v41LoanForm">贷款还款</button><button type="button" class="${txType==='refund'?'active':''}" data-txtype="refund">退款</button>${['transfer_in','transfer_out'].includes(txType)?`<button type="button" class="active" data-txtype="${txType}">${txType==='transfer_in'?'导入转入':'导入转出'}</button>`:''}</div><label class="inputLabel" id="txFromTitle">账户</label><div id="txFromNative"><select class="field" name="account" id="txFrom">${options(accountId)}</select></div><div id="txFromSearch" class="hide"><button type="button" class="txAccountBtn" data-act="openTxAccountPicker" data-id="from" aria-label="搜索选择转出账户"><span class="txAccountAvatar" id="txFromAvatar"></span><span class="txAccountNames"><b id="txFromLabel"></b><small id="txFromMeta"></small></span><span class="txAccountCaret">⌕</span></button></div><div id="txSwapWrap" class="${isTransfer?'':'hide'}" style="width:100%;text-align:center;margin:28px 0 4px;"><button type="button" class="txSwapBtn" data-act="swapTxAccounts" title="交换转出账户和转入账户" style="display:inline-block;">⇅ 交换转出、转入账户</button></div><div id="txToWrap" class="${isTransfer?'':'hide'}"><label class="inputLabel" style="margin-top:0">转入账户</label><select class="field txToNativeHidden" name="to" id="txTo">${options(x?.to||state.accounts.find(a=>a.id!==accountId)?.id||'')}</select><div id="txToSearch"><button type="button" class="txAccountBtn" data-act="openTxAccountPicker" data-id="to" aria-label="搜索选择转入账户"><span class="txAccountAvatar" id="txToAvatar"></span><span class="txAccountNames"><b id="txToLabel"></b><small id="txToMeta"></small></span><span class="txAccountCaret">⌕</span></button></div><p class="txTransferHint">点击账户名称即可搜索；不同币种交换时会同步交换转出和到账金额。</p></div><div id="txAccountPicker" class="txAccountPicker hide"><div class="txAccountPickerTitle"><span id="txAccountPickerTitle">搜索账户</span><button type="button" class="btn tiny" data-act="closeTxAccountPicker">收起</button></div><input class="field txAccountPickerInput" type="search" id="txAccountSearchInput" placeholder="搜索账户名称、分组或币种" autocomplete="off" aria-label="搜索账户"><div id="txAccountPickerResults" class="txAccountPickerResults"></div></div><label class="inputLabel">实际金额（<span id="txCurrency">${E(acc?.currency||'CNY')}</span>）</label><input class="field" id="txAmount" type="number" min="0.01" max="999999999999" step="0.01" required inputmode="decimal" name="amount" value="${x?(x.amount/100).toFixed(2):''}" placeholder="0.00"><div id="discountWrap" class="${txType==='expense'?'':'hide'}"><label class="inputLabel">支付时立减优惠（选填）</label><input class="field" id="txDiscount" name="discount" type="number" min="0" step="0.01" inputmode="decimal" value="${x?.discount?(x.discount/100).toFixed(2):''}" placeholder="例如 2.00，不影响实际扣款"><div class="discountPreview" id="discountPreview">原价、优惠和实付将自动计算</div></div><div id="targetAmountWrap" class="${isTransfer?'':'hide'}"><label class="inputLabel">转入金额（实际到账金额）</label><input class="field" id="txToAmount" type="number" step="0.01" min="0.01" name="toAmount" data-manual="false" value="${x?.toAmount?(x.toAmount/100).toFixed(2):''}" placeholder="默认与转出金额相同"><p class="smallHint">同币种允许转出与到账金额不同；跨币种以实际到账额记账，差额不自动视为优惠。</p><div class="v41TransferDifference hide" id="v41TransferDifference"><div id="v41TransferDiffHint" class="smallHint"></div><label class="inputLabel">差额性质（同币种适用）</label><select name="transferDeltaKind" id="v41TransferDeltaKind" class="field"><option value="discount" ${x?.transferDeltaKind==='discount'?'selected':''}>转账优惠 / 减免</option><option value="fee" ${x?.transferDeltaKind==='fee'?'selected':''}>手续费 / 损耗</option><option value="other" ${x?.transferDeltaKind==='other'?'selected':''}>其他差额</option></select></div></div><div class="flexFields"><div><label class="inputLabel">交易日期</label><input class="field" type="date" name="date" required value="${E(x?.date||now())}"></div><div><label class="inputLabel">时间（选填）</label><input class="field" type="time" name="time" value="${E(existing ? (x?.time||'') : (x?.time||nowTime()))}"></div></div><label class="inputLabel">描述</label><input class="field" name="description" id="txDesc" autocomplete="off" maxlength="240" placeholder="输入后联想历史交易" value="${E(x?.description||'')}"><label class="inputLabel">交易对方（选填）</label><input class="field" name="payee" id="txPayee" autocomplete="off" maxlength="240" placeholder="也可输入交易对方进行联想" value="${E(x?.payee||'')}"><div class="suggestBox hide" id="suggestBox"></div><div id="categoryWrap" class="${isTransfer?'hide':''}"><label class="inputLabel">分类</label><div class="catField"><input class="field" name="category" id="txCategory" maxlength="120" value="${E(x?.category||'')}" placeholder="点击右侧选择已有分类"><button type="button" class="btn soft catPickBtn" data-act="openCategoryPicker">选择分类 ▾</button></div><p class="smallHint">可选用 MoneyWiz 导入的历史分类，也可直接输入新名称。</p></div><div id="splitWrap" class="${txType==='expense'?'':'hide'}"><label class="inlineCheck"><input type="checkbox" id="splitToggle" ${x?.splits?.length?'checked':''}> 按多个分类拆分这笔支出（拆分合计等于实付）</label><div id="splitRows" class="${x?.splits?.length?'':'hide'}">${(x?.splits?.length?x.splits:[{category:'',amount:0},{category:'',amount:0}]).map((s,i)=>`<div class="splitLine"><input class="field splitCategory" placeholder="分类" value="${E(s.category)}" readonly><button type="button" class="btn soft" data-act="openSplitCategoryPicker">选择</button><input class="field splitAmount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="金额" value="${s.amount?(s.amount/100).toFixed(2):''}"><button type="button" class="btn tiny" data-act="removeSplit" data-id="${i}">×</button></div>`).join('')}<button type="button" class="btn tiny soft" data-act="addSplit">+ 添加分类</button></div></div><label class="inputLabel">标签（用逗号分隔）</label><input class="field" name="tags" list="tagList" value="${E(tags)}" placeholder="例如：出差,可报销"><datalist id="tagList">${[...new Set(state.transactions.flatMap(z=>z.tags||[]))].map(t=>`<option value="${E(t)}"></option>`).join('')}</datalist><label class="inputLabel">备注（选填）</label><textarea class="field" name="note" rows="2">${E(x?.note||'')}</textarea><label class="inputLabel">票据照片（最多5张，自动压缩，保存在本地）</label><input class="field" type="file" id="txAttachments" accept="image/jpeg,image/png,image/webp" multiple><div id="existingAttachments">${files}</div><p class="smallHint">票据会包含在完整 JSON 备份内。请勿把私人备份上传到公开网站。</p></form>`,`<button class="btn soft" data-act="closeModal">取消</button>${existing?'<button class="btn warn" data-act="deleteTx">删除</button>':''}<button class="btn soft" data-act="saveTx">保存</button>`);adaptTxForm();updateDiscountPreview();setTimeout(()=>{const el=$('txAmount');if(el)el.focus();},100);}
+modal(existing?'编辑交易':template?'复制 / 退款交易':'新增交易',`<form id="txForm"><div class="choiceTabs" id="txTabs"><button type="button" class="${txType==='expense'?'active':''}" data-txtype="expense">支出</button><button type="button" class="${txType==='income'?'active':''}" data-txtype="income">收入</button><button type="button" class="${txType==='transfer'?'active':''}" data-txtype="transfer">转账</button><button type="button" class="${txType==='loan_repayment'?'active':''}" data-act="v41LoanForm">贷款还款</button><button type="button" class="${txType==='refund'?'active':''}" data-txtype="refund">退款</button>${['transfer_in','transfer_out'].includes(txType)?`<button type="button" class="active" data-txtype="${txType}">${txType==='transfer_in'?'导入转入':'导入转出'}</button>`:''}</div><label class="inputLabel" id="txFromTitle">账户</label><div id="txFromNative"><select class="field" name="account" id="txFrom">${options(accountId)}</select></div><div id="txFromSearch" class="hide"><button type="button" class="txAccountBtn" data-act="openTxAccountPicker" data-id="from" aria-label="搜索选择转出账户"><span class="txAccountAvatar" id="txFromAvatar"></span><span class="txAccountNames"><b id="txFromLabel"></b><small id="txFromMeta"></small></span><span class="txAccountCaret"></span></button></div><div id="txSwapWrap" class="${isTransfer?'':'hide'}" style="width:100%;text-align:center;margin:20px 0 16px;"><button type="button" class="txSwapBtn" data-act="swapTxAccounts" title="交换转出账户和转入账户" style="display:inline-block;">交换转出、转入账户</button></div><div id="txToWrap" class="${isTransfer?'':'hide'}"><label class="inputLabel" style="margin-top:0">转入账户</label><select class="field txToNativeHidden" name="to" id="txTo">${options(x?.to||state.accounts.find(a=>a.id!==accountId)?.id||'')}</select><div id="txToSearch"><button type="button" class="txAccountBtn" data-act="openTxAccountPicker" data-id="to" aria-label="搜索选择转入账户"><span class="txAccountAvatar" id="txToAvatar"></span><span class="txAccountNames"><b id="txToLabel"></b><small id="txToMeta"></small></span><span class="txAccountCaret"></span></button></div><p class="txTransferHint">点击账户名称即可搜索；不同币种交换时会同步交换转出和到账金额。</p></div><div id="txAccountPicker" class="txAccountPicker hide"><div class="txAccountPickerTitle"><span id="txAccountPickerTitle">搜索账户</span><button type="button" class="btn tiny" data-act="closeTxAccountPicker">收起</button></div><input class="field txAccountPickerInput" type="search" id="txAccountSearchInput" placeholder="搜索账户名称、分组或币种" autocomplete="off" aria-label="搜索账户"><div id="txAccountPickerResults" class="txAccountPickerResults"></div></div><label class="inputLabel">实际金额（<span id="txCurrency">${E(acc?.currency||'CNY')}</span>）</label><input class="field" id="txAmount" type="number" min="0.01" max="999999999999" step="0.01" required inputmode="decimal" name="amount" value="${x?(x.amount/100).toFixed(2):''}" placeholder="0.00"><div id="discountWrap" class="${txType==='expense'?'':'hide'}"><label class="inputLabel">支付时立减优惠（选填）</label><input class="field" id="txDiscount" name="discount" type="number" min="0" step="0.01" inputmode="decimal" value="${x?.discount?(x.discount/100).toFixed(2):''}" placeholder="例如 2.00，不影响实际扣款"><div class="discountPreview" id="discountPreview">原价、优惠和实付将自动计算</div></div><div id="targetAmountWrap" class="${isTransfer?'':'hide'}"><label class="inputLabel">转入金额（实际到账金额）</label><input class="field" id="txToAmount" type="number" step="0.01" min="0.01" name="toAmount" data-manual="false" value="${x?.toAmount?(x.toAmount/100).toFixed(2):''}" placeholder="默认与转出金额相同"><p class="smallHint">同币种允许转出与到账金额不同；跨币种以实际到账额记账，差额不自动视为优惠。</p><div class="v41TransferDifference hide" id="v41TransferDifference"><div id="v41TransferDiffHint" class="smallHint"></div><label class="inputLabel">差额性质（同币种适用）</label><select name="transferDeltaKind" id="v41TransferDeltaKind" class="field"><option value="discount" ${x?.transferDeltaKind==='discount'?'selected':''}>转账优惠 / 减免</option><option value="fee" ${x?.transferDeltaKind==='fee'?'selected':''}>手续费 / 损耗</option><option value="other" ${x?.transferDeltaKind==='other'?'selected':''}>其他差额</option></select></div></div><div class="flexFields"><div><label class="inputLabel">交易日期</label><input class="field" type="date" name="date" required value="${E(x?.date||now())}"></div><div><label class="inputLabel">时间（选填）</label><input class="field" type="time" name="time" value="${E(existing ? (x?.time||'') : (x?.time||nowTime()))}"></div></div><label class="inputLabel">描述</label><input class="field" name="description" id="txDesc" autocomplete="off" maxlength="240" placeholder="输入后联想历史交易" value="${E(x?.description||'')}"><label class="inputLabel">交易对方（选填）</label><input class="field" name="payee" id="txPayee" autocomplete="off" maxlength="240" placeholder="也可输入交易对方进行联想" value="${E(x?.payee||'')}"><div class="suggestBox hide" id="suggestBox"></div><div id="categoryWrap" class="${isTransfer?'hide':''}"><label class="inputLabel">分类</label><div class="catField"><input class="field" name="category" id="txCategory" maxlength="120" value="${E(x?.category||'')}" placeholder="点击右侧选择已有分类"><button type="button" class="btn soft catPickBtn" data-act="openCategoryPicker">选择分类 ▾</button></div><p class="smallHint">可选用 MoneyWiz 导入的历史分类，也可直接输入新名称。</p></div><div id="splitWrap" class="${txType==='expense'?'':'hide'}"><label class="inlineCheck"><input type="checkbox" id="splitToggle" ${x?.splits?.length?'checked':''}> 按多个分类拆分这笔支出（拆分合计等于实付）</label><div id="splitRows" class="${x?.splits?.length?'':'hide'}">${(x?.splits?.length?x.splits:[{category:'',amount:0},{category:'',amount:0}]).map((s,i)=>`<div class="splitLine"><input class="field splitCategory" placeholder="分类" value="${E(s.category)}" readonly><button type="button" class="btn soft" data-act="openSplitCategoryPicker">选择</button><input class="field splitAmount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="金额" value="${s.amount?(s.amount/100).toFixed(2):''}"><button type="button" class="btn tiny" data-act="removeSplit" data-id="${i}">×</button></div>`).join('')}<button type="button" class="btn tiny soft" data-act="addSplit">+ 添加分类</button></div></div><label class="inputLabel">标签（用逗号分隔）</label><input class="field" name="tags" list="tagList" value="${E(tags)}" placeholder="例如：出差,可报销"><datalist id="tagList">${[...new Set(state.transactions.flatMap(z=>z.tags||[]))].map(t=>`<option value="${E(t)}"></option>`).join('')}</datalist><label class="inputLabel">备注（选填）</label><textarea class="field" name="note" rows="2">${E(x?.note||'')}</textarea><label class="inputLabel">票据照片（最多5张，自动压缩，保存在本地）</label><input class="field" type="file" id="txAttachments" accept="image/jpeg,image/png,image/webp" multiple><div id="existingAttachments">${files}</div><p class="smallHint">票据会包含在完整 JSON 备份内。请勿把私人备份上传到公开网站。</p></form>`,`<button class="btn soft" data-act="closeModal">取消</button>${existing?'<button class="btn warn" data-act="deleteTx">删除</button>':''}<button class="btn soft" data-act="saveTx">保存</button>`);adaptTxForm();updateDiscountPreview();setTimeout(()=>{const el=$('txAmount');if(el)el.focus();},100);}
 
 function getPeriodRange(rule, baseDate=new Date()){
   if(rule.cycle!=='monthly') return {start:rule.startDate, end:rule.endDate, label:`${rule.startDate} ~ ${rule.endDate}`};
@@ -903,6 +1283,7 @@ function checkRewardHistory(){
   const todayDate=new Date();
   
   for(const rule of (state.rewardRules||[])){
+    if(rule.archived) continue;
     if(rule.cycle==='monthly'){
       // 强制回溯 6 个月
       for(let i=1; i<=6; i++){
@@ -969,7 +1350,10 @@ function rewardRuleForm(id='',accountId=''){
 <div class="choiceTabs" style="margin-bottom:10px" id="rewardCycleTabs"><button type="button" class="${!isCycle?'active':''}" data-rcycle="once">单次活动</button><button type="button" class="${isCycle?'active':''}" data-rcycle="monthly">每月循环</button></div>
 <div id="cycleOnceBox" class="${isCycle?'hide':''}"><div class="flexFields"><div><label class="inputLabel">开始日期</label><input class="field" type="date" name="startDate" required value="${E(r?.startDate||curMonth()+'-01')}"></div><div><label class="inputLabel">结束日期</label><input class="field" type="date" name="endDate" required value="${E(r?.endDate||now())}"></div></div></div>
 <div id="cycleMonthlyBox" class="${isCycle?'':'hide'}"><div class="flexFields"><div><label class="inputLabel">每月开始日</label><input class="field" type="number" name="startDay" min="1" max="31" value="${r?.startDay||1}"></div><div><label class="inputLabel">每月结束日</label><input class="field" type="number" name="endDay" min="1" max="31" value="${r?.endDay||31}"></div></div><p class="smallHint">若当月没有 30/31 日，系统将自动视为当月最后一天。结束日小于开始日时，代表跨月（如 5号-次月4号）。</p></div>
-<label class="inputLabel">统计分类（默认全选）</label><div class="settingsActions" style="margin-bottom:6px"><button type="button" class="btn tiny" data-act="rewardCatAll">全选</button><button type="button" class="btn tiny" data-act="rewardCatNone">清空</button></div><div class="advOptions" style="max-height:180px;border:1px solid #e6ebf2;border-radius:12px">${catOptions.map(c=>`<label class="advCheck"><input type="checkbox" class="rewardCat" value="${E(c)}" ${include.length===0||include.includes(c)?'checked':''}><span>${E(c)}</span></label>`).join('')||'<span class="smallHint">该账户暂无分类</span>'}</div><label class="inputLabel">目标档位（可多档）</label><div id="rewardTargetRows">${targets}</div><button type="button" class="btn tiny soft" data-act="addRewardTarget">＋ 添加档位</button></form>`,`<button class="btn" data-act="closeModal">取消</button>${r?`<button class="btn warn" data-act="deleteRewardRule" data-id="${E(r.id)}">删除</button>`:''}<button class="btn blue" data-act="saveRewardRule" data-id="${E(accId)}">保存</button>`);
+<label class="inputLabel">统计分类（默认全选）</label><div class="settingsActions" style="margin-bottom:6px"><button type="button" class="btn tiny" data-act="rewardCatAll">全选</button><button type="button" class="btn tiny" data-act="rewardCatNone">清空</button></div><div class="advOptions" style="max-height:180px;border:1px solid #e6ebf2;border-radius:12px">${catOptions.map(c=>`<label class="advCheck"><input type="checkbox" class="rewardCat" value="${E(c)}" ${include.length===0||include.includes(c)?'checked':''}><span>${E(c)}</span></label>`).join('')||'<span class="smallHint">该账户暂无分类</span>'}</div><label class="inputLabel">目标档位（可多档）</label><div id="rewardTargetRows">${targets}</div><button type="button" class="btn tiny soft" data-act="addRewardTarget">添加档位</button>
+<label class="inlineCheck" style="margin-top:16px"><input type="checkbox" name="isArchived" ${r?.archived?'checked':''}> 归档（停止追踪该规则）</label>
+<p class="smallHint">勾选归档后，账户列表将不再高亮该活动，也不再计算新周期的进度，但历史记录会保留。</p>
+</form>`,`<button class="btn" data-act="closeModal">取消</button>${r?`<button class="btn warn" data-act="deleteRewardRule" data-id="${E(r.id)}">删除</button>`:''}<button class="btn blue" data-act="saveRewardRule" data-id="${E(accId)}">保存</button>`);
 }function rewardQuickRange(kind){
  const d=new Date(),y=d.getFullYear(),m=d.getMonth()+1,pad=n=>String(n).padStart(2,'0'),last=(yy,mm)=>new Date(yy,mm,0).getDate();
  const f=$('rewardRuleForm');if(!f)return;
@@ -1014,8 +1398,9 @@ async function saveRewardRule(accountId){
  if(!targets.length)throw Error('至少设置一个目标档位');
  targets.sort((x,y)=>x.amount-y.amount);
  const old=editing&&(state.rewardRules||[]).find(x=>x.id===editing);
+ const isArchived = form.get('isArchived') === 'on';
  const rule={
-   id:old?.id||uid(), accountId, name, cycle: isCycle?'monthly':'once', 
+   id:old?.id||uid(), accountId, name, cycle: isCycle?'monthly':'once', archived: isArchived,
    startDate: isCycle?'':startDate, endDate: isCycle?'':endDate, 
    startDay, endDay, includeCategories:include, targets, 
    createdAt: old?.createdAt||new Date().toISOString()
@@ -1162,6 +1547,190 @@ function importCSV(){let c=csvContext;if(!c)return;
 }
 async function restore(file){try{if(file.size>120e6)throw Error('备份文件超过120MB，请先分批减少附件');const text=await file.text(),obj=validate(JSON.parse(text));if(!confirm(`即将用备份覆盖当前所有账本。\n包含${obj.accounts.length}个账户、${obj.transactions.length}笔交易。\n\n确定已备份当前数据并继续？`))return;let old=state;state=obj;try{await save();accountDetail='';page='accounts';render();t('完整备份已恢复')}catch(e){state=old;render()}}catch(e){alert('恢复失败：'+e.message)}}
 async function act(name,id,element){try{
+if(name==='viewAllAnnualFees'){ viewAllAnnualFees(); return; }
+if(name==='newAnnualFee'){ annualFeeForm('', id); return; }
+if(name==='editAnnualFee'){ annualFeeForm(id); return; }
+if(name==='deleteAnnualFee'){
+  if(!confirm('确定删除该年费规则吗？')) return;
+  state.annualFees = state.annualFees.filter(x=>x.id!==id);
+  await save(); closeModal(); render(); t('已删除'); return;
+}
+if(name==='payAnnualFee'){
+  const f = state.annualFees.find(x=>x.id===id);
+  if(!f) return;
+  if(!confirm(`确认已缴纳或已免除「${f.name}」的年费吗？系统将顺延至下一年。`)) return;
+  f.lastPaidYear = getFeePeriod(f).targetYear;
+  f.manualAmount = 0; 
+  await save(); 
+  if($('modalTitle').textContent === '年费看板') { viewAllAnnualFees(); } else { render(); }
+  t('已顺延至下一年'); return;
+}
+if(name==='updateFeeProgress'){
+  const f = state.annualFees.find(x=>x.id===id);
+  if(!f) return;
+  const val = prompt(`请输入「${f.name}」目前已刷的${f.waiverType==='amount'?'金额（元）':'笔数'}：`, f.waiverType==='amount'?(f.manualAmount/100).toFixed(2):f.manualAmount);
+  if(val===null) return;
+  const num = Number(val);
+  if(isNaN(num)||num<0) return alert('请输入有效数字');
+  f.manualAmount = f.waiverType==='amount' ? Math.round(num*100) : Math.floor(num);
+  f.useManual = true;
+  await save(); 
+  if($('modalTitle').textContent === '年费看板') { viewAllAnnualFees(); } else { render(); }
+  t('进度已更新'); return;
+}
+if(name==='saveAnnualFee'){
+  const fEl = $('annualFeeForm');
+  if(!fEl.reportValidity()) return;
+  const form = new FormData(fEl);
+  const name = String(form.get('name')).trim();
+  const amount = cents(form.get('amount'));
+  // 注意：这里去掉了 cycleYear 的获取
+  
+  const feeMonth = Math.max(1, Math.min(12, Number(form.get('feeMonth'))));
+  const feeDay = Math.max(1, Math.min(31, Number(form.get('feeDay'))));
+  
+  // 新增：获取统计截止日类型
+  const cutoffType = String(form.get('cutoffType') || 'same');
+  
+  const waiverType = String(form.get('waiverType'));
+  let waiverTarget = 0;
+  if(waiverType==='amount') waiverTarget = cents(form.get('waiverTarget'));
+  else if(waiverType==='count') waiverTarget = Math.max(1, Number(form.get('waiverTarget')));
+  
+  const filterTag = String(form.get('filterTag')||'').trim();
+  const useManual = form.get('useManual') === 'on';
+  
+  const old = editing && state.annualFees.find(x=>x.id===editing);
+  
+  // 组装对象时，去掉了 cycleYear，加上了 cutoffType
+  const newFee = {
+    id: old?.id || uid(),
+    accountId: id, name, amount, feeMonth, feeDay, cutoffType, waiverType, waiverTarget, filterTag, useManual,
+    manualAmount: old?.manualAmount || 0
+  };
+  
+  if(old) Object.assign(old, newFee);
+  else state.annualFees.push(newFee);
+  
+  await save(); closeModal(); render(); t('年费规则已保存');
+  return;
+}
+if(name==='clearJumpFilter'){
+  filter.jumpType='';
+  filter.jumpLabel='';
+  render();
+  return;
+}
+if(name==='jumpToDetail'){
+  filter=blankFilter();
+  filter.dateOp = 'range'; // 必须加上这句，激活日期筛选
+  filter.dateStart=reportDateStart;
+  filter.dateEnd=reportDateEnd;
+  
+    if(id.startsWith('month_')){
+    const m=id.slice(6);
+    const y = parseInt(m.slice(0,4), 10);
+    const mo = parseInt(m.slice(5,7), 10);
+    const lastDay = new Date(y, mo, 0).getDate(); // 智能获取该月最后一天
+    filter.dateStart=m+'-01';
+    filter.dateEnd=m+'-'+String(lastDay).padStart(2,'0');
+    filter.jumpLabel=m.replace('-','年')+'月 流水';
+  } else {
+    const labels={
+      'cashback':'银行返现',
+      'discount':'立减优惠',
+      'loan_principal':'偿还贷款本金',
+      'loan_interest':'贷款利息',
+      'loan_fee':'贷款其他费用',
+      'transfer_discount':'转账即时优惠',
+      'transfer_fee':'转账手续费',
+      'transfer_other':'其他转账差额'
+    };
+    filter.jumpType=id;
+    filter.jumpLabel=labels[id]||'特定流水';
+  }
+  
+  page='ledger';
+  render();
+  window.scrollTo(0,0);
+  return;
+}
+if(name==='openReportAccountPicker'){
+  let itemsHtml = `<button class="txAccountPickerRow" data-act="pickReportAccount" data-id=""><span class="txPickMain">全部账户</span></button>`;
+  const sortedGroups = (state.accountGroups||[]).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  
+  sortedGroups.forEach(g => {
+    const groupAccs = state.accounts.filter(a=>a.groupId===g.id);
+    if(groupAccs.length > 0) {
+      itemsHtml += `<div class="txAccountPickerGroup">📁 ${E(g.name)}</div>`;
+      itemsHtml += `<button class="txAccountPickerRow" data-act="pickReportAccount" data-id="group:${E(g.id)}"><span class="txPickMain" style="color:#1678ee">选择整个分组</span></button>`;
+      sortedAccounts(groupAccs).forEach(a => {
+        itemsHtml += `<button class="txAccountPickerRow" data-act="pickReportAccount" data-id="${E(a.id)}" style="padding-left:24px"><span class="txPickMain">${E(a.name)}</span><span class="txPickCur">${E(a.currency)}</span></button>`;
+      });
+    }
+  });
+
+  const ungrouped = state.accounts.filter(a => !a.groupId);
+  if (ungrouped.length > 0) {
+    itemsHtml += `<div class="txAccountPickerGroup">📁 未分组</div>`;
+    sortedAccounts(ungrouped).forEach(a => {
+      itemsHtml += `<button class="txAccountPickerRow" data-act="pickReportAccount" data-id="${E(a.id)}" style="padding-left:24px"><span class="txPickMain">${E(a.name)}</span><span class="txPickCur">${E(a.currency)}</span></button>`;
+    });
+  }
+
+  modal('报表账户范围', `<div class="txAccountPicker"><input class="field txAccountPickerInput" type="search" placeholder="搜索账户或分组" autocomplete="off" oninput="this.nextElementSibling.querySelectorAll('.txAccountPickerRow').forEach(r=>r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'flex':'none')"><div class="txAccountPickerResults">${itemsHtml}</div></div>`, `<button class="btn" data-act="closeModal">取消</button>`);
+  return;
+}
+
+if(name==='pickReportAccount'){
+  v39ReportAccount = id;
+  closeModal();
+  render(); // 重新渲染报表
+  return;
+}
+if(name==='openLedgerAccountPicker'){
+  let itemsHtml = `<button class="txAccountPickerRow" data-act="pickLedgerAccount" data-id=""><span class="txPickMain">全部账户</span></button>`;
+  
+  // 1. 先按分组顺序展示
+  const sortedGroups = (state.accountGroups||[]).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  
+  sortedGroups.forEach(g => {
+    const groupAccs = state.accounts.filter(a=>a.groupId===g.id);
+    if(groupAccs.length > 0) {
+      itemsHtml += `<div class="txAccountPickerGroup">📁 ${E(g.name)}</div>`;
+      itemsHtml += `<button class="txAccountPickerRow" data-act="pickLedgerAccount" data-id="group:${E(g.id)}"><span class="txPickMain" style="color:#1678ee">选择整个分组</span></button>`;
+      
+      // 2. 组内账户使用 sortedAccounts 排序，保证和首页一致
+      sortedAccounts(groupAccs).forEach(a => {
+        itemsHtml += `<button class="txAccountPickerRow" data-act="pickLedgerAccount" data-id="${E(a.id)}" style="padding-left:24px"><span class="txPickMain">${E(a.name)}</span><span class="txPickCur">${E(a.currency)}</span></button>`;
+      });
+    }
+  });
+
+  // 3. 展示未分组的账户
+  const ungrouped = state.accounts.filter(a => !a.groupId);
+  if (ungrouped.length > 0) {
+    itemsHtml += `<div class="txAccountPickerGroup">📁 未分组</div>`;
+    sortedAccounts(ungrouped).forEach(a => {
+      itemsHtml += `<button class="txAccountPickerRow" data-act="pickLedgerAccount" data-id="${E(a.id)}" style="padding-left:24px"><span class="txPickMain">${E(a.name)}</span><span class="txPickCur">${E(a.currency)}</span></button>`;
+    });
+  }
+
+  modal('选择账户', `<div class="txAccountPicker"><input class="field txAccountPickerInput" type="search" id="ledgerAccountSearchInput" placeholder="搜索账户或分组" autocomplete="off" oninput="this.nextElementSibling.querySelectorAll('.txAccountPickerRow').forEach(r=>r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'flex':'none')"><div class="txAccountPickerResults" id="ledgerAccountPickerResults">${itemsHtml}</div></div>`, `<button class="btn" data-act="closeModal">取消</button>`);
+  return;
+}
+if(name==='pickLedgerAccount'){
+  const val = id;
+  if(val.startsWith('group:')){
+    const gid = val.slice(6);
+    filter.accounts = state.accounts.filter(a=>a.groupId===gid).map(a=>a.id);
+  } else {
+    filter.accounts = val ? [val] : [];
+  }
+  closeModal();
+  render();
+  return;
+}
 if(name==='reportQuickDate'){
   const d=new Date(), y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0');
   if(id==='today'){reportDateStart=now();reportDateEnd=now();}
@@ -1648,7 +2217,7 @@ renderReports=function(){
 
   // 添加 12个月趋势与贷款面板
   const groupOptions=(state.accountGroups||[]).filter(g=>state.accounts.some(a=>a.groupId===g.id)).map(g=>`<option value="group:${E(g.id)}" ${v39ReportAccount==='group:'+g.id?'selected':''}>📁 分组：${E(g.name)}</option>`).join('');
-  const selector=`<div class="card settingsCard" style="margin-top:14px"><h3>最近12个月趋势与单账户统计</h3><div class="v39Field"><label class="inputLabel">账户范围（影响趋势和此下方面板）</label><select class="field" id="v39ReportAccount"><option value="">全部账户</option>${groupOptions}${state.accounts.map(a=>`<option value="${E(a.id)}" ${v39ReportAccount===a.id?'selected':''}>${E(a.name)} (${E(a.currency)})</option>`).join('')}</select></div><div id="v39TrendBlock">${v39Trends('CNY',accIds)}</div><p class="smallHint">外币账户均按你设置的汇率折算为人民币展示。</p></div>`;
+  const selector=`<div class="card settingsCard" style="margin-top:14px"><h3>最近12个月趋势与单账户统计</h3><div class="v39Field"><label class="inputLabel">账户范围（影响趋势和此下方面板）</label><button type="button" class="field" data-act="openReportAccountPicker" style="text-align:left;display:flex;justify-content:space-between;align-items:center;background:white"><span>${v39ReportAccount ? (v39ReportAccount.startsWith('group:') ? '📁 ' + (state.accountGroups.find(g=>g.id===v39ReportAccount.slice(6))?.name||'分组') : aName(v39ReportAccount)) : '全部账户'}</span><span style="color:#7d93aa"></span></button></div><div id="v39TrendBlock">${v39Trends('CNY',accIds)}</div><p class="smallHint">外币账户均按你设置的汇率折算为人民币展示。</p></div>`;
 
   const filteredTx=state.transactions.filter(x=>x.date>=reportDateStart&&x.date<=reportDateEnd&&accIds.has(x.from));
   const calc=(x,amt)=>{const ac=account(x.from)?.currency||cur;const rate=ac==='CNY'?1:(Number(state.fxRates?.[ac])||1);return Math.round(amt*rate)};
@@ -1657,7 +2226,14 @@ renderReports=function(){
   const principal=loans.reduce((s,x)=>s+calc(x,x.principal),0), interest=loans.reduce((s,x)=>s+calc(x,x.interest),0), fees=loans.reduce((s,x)=>s+calc(x,x.loanFee),0);
   const discounts=transfers.reduce((s,x)=>s+calc(x,x.transferDeltaKind==='discount'?Math.max(0,x.toAmount-x.amount):0),0), transferFees=transfers.reduce((s,x)=>s+calc(x,x.transferDeltaKind==='fee'?Math.max(0,x.amount-x.toAmount):0),0), otherDelta=transfers.reduce((s,x)=>s+calc(x,x.transferDeltaKind==='other'?x.toAmount-x.amount:0),0);
   
-  const panel=`<div class="card settingsCard v41StatsCard"><h3>贷款还款与转账差额</h3><div class="v41InfoGrid"><div><small>偿还贷款本金</small><b style="color:#269b62">${fmt(principal,cur)}</b></div><div><small>贷款利息支出</small><b style="color:#269b62">${fmt(interest,cur)}</b></div><div><small>贷款其他费用</small><b style="color:#269b62">${fmt(fees,cur)}</b></div><div><small>转账即时优惠</small><b style="color:#d94b4b">${fmt(discounts,cur)}</b></div><div><small>转账手续费</small><b style="color:#269b62">${fmt(transferFees,cur)}</b></div><div><small>其他转账差额</small><b style="color:${otherDelta>=0?'#d94b4b':'#269b62'}">${fmt(otherDelta,cur,true)}</b></div></div></div>`;
+  const panel=`<div class="card settingsCard v41StatsCard"><h3>贷款还款与转账差额</h3><div class="v41InfoGrid">
+<div data-act="jumpToDetail" data-id="loan_principal" style="cursor:pointer"><small>偿还贷款本金</small><b style="color:#269b62">${fmt(principal,cur)}</b></div>
+<div data-act="jumpToDetail" data-id="loan_interest" style="cursor:pointer"><small>贷款利息支出</small><b style="color:#269b62">${fmt(interest,cur)}</b></div>
+<div data-act="jumpToDetail" data-id="loan_fee" style="cursor:pointer"><small>贷款其他费用</small><b style="color:#269b62">${fmt(fees,cur)}</b></div>
+<div data-act="jumpToDetail" data-id="transfer_discount" style="cursor:pointer"><small>转账即时优惠</small><b style="color:#d94b4b">${fmt(discounts,cur)}</b></div>
+<div data-act="jumpToDetail" data-id="transfer_fee" style="cursor:pointer"><small>转账手续费</small><b style="color:#269b62">${fmt(transferFees,cur)}</b></div>
+<div data-act="jumpToDetail" data-id="transfer_other" style="cursor:pointer"><small>其他转账差额</small><b style="color:${otherDelta>=0?'#d94b4b':'#269b62'}">${fmt(otherDelta,cur,true)}</b></div>
+</div></div>`;
 
   return html.replace('<div class="notice blueTint" style="margin-top:15px">',selector+'<div class="notice blueTint" style="margin-top:15px">').replace('</div>'+'<div class="notice blueTint" style="margin-top:15px">', '</div>'+panel+'<div class="notice blueTint" style="margin-top:15px">');
 };
@@ -1937,7 +2513,15 @@ function v39Trends(cur,ids){
   }
   const sum=arr.reduce((r,x)=>({inc:r.inc+x.inc,out:r.out+x.out,refund:r.refund+x.refund,discount:r.discount+x.discount}),{inc:0,out:0,refund:0,discount:0});
   const peak=Math.max(1,...arr.map(x=>Math.max(0,x.inc)+Math.max(0,x.out)));
-  return `<div class="v39InfoGrid"><div><small>12个月收入</small><b style="color:#d94b4b">${fmt(sum.inc,cur)}</b></div><div><small>12个月净支出</small><b style="color:#269b62">${fmt(sum.out,cur)}</b></div><div><small>12个月退款</small><b style="color:#d94b4b">${fmt(sum.refund,cur)}</b></div><div><small>12个月收支差</small><b style="color:${(sum.inc-sum.out)>=0?'#d94b4b':'#269b62'}">${fmt(sum.inc-sum.out,cur,true)}</b></div></div><div class="v39mini" style="margin-top:10px">月份　　收入（红）／净支出（绿）</div>${arr.map(x=>`<div class="v39ChartRow"><span>${E(x.month.slice(5))}月</span><div class="v39Bars"><span class="i" style="width:${Math.max(0,x.inc)/peak*100}%"></span><span class="o" style="width:${Math.max(0,x.out)/peak*100}%"></span></div><span>${(x.inc/100).toLocaleString('zh-CN')}</span><span>${(x.out/100).toLocaleString('zh-CN')}</span></div>`).join('')}`;
+  return `<div class="v39InfoGrid"><div><small>12个月收入</small><b style="color:#d94b4b">${fmt(sum.inc,cur)}</b></div><div><small>12个月净支出</small><b style="color:#269b62">${fmt(sum.out,cur)}</b></div><div><small>12个月退款</small><b style="color:#d94b4b">${fmt(sum.refund,cur)}</b></div><div><small>12个月收支差</small><b style="color:${(sum.inc-sum.out)>=0?'#d94b4b':'#269b62'}">${fmt(sum.inc-sum.out,cur,true)}</b></div></div><div class="v39mini" style="margin-top:10px">月份　　收入（红）／净支出（绿）</div>${arr.map(x=>`
+  <div class="v39ChartRow" style="position:relative; padding:7px 0; border-bottom:1px solid #f0f1f4; display:grid; grid-template-columns:36px minmax(50px,1fr) auto auto; gap:8px; align-items:center; font-size:11px;">
+    <button type="button" data-act="jumpToDetail" data-id="month_${x.month}" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:10" aria-label="查看该月流水"></button>
+    <span>${E(x.month.slice(5))}月</span>
+    <div class="v39Bars"><span class="i" style="width:${Math.max(0,x.inc)/peak*100}%"></span><span class="o" style="width:${Math.max(0,x.out)/peak*100}%"></span></div>
+    <span>${(x.inc/100).toLocaleString('zh-CN')}</span>
+    <span>${(x.out/100).toLocaleString('zh-CN')}</span>
+  </div>
+`).join('')}`;
 }
 v39Trends=function(cur,ids){
   const base=new Date(reportDateEnd+'T12:00:00'),arr=[];
@@ -2096,14 +2680,6 @@ document.addEventListener('click',e=>{
 
 function handleFilterChange(e){let el=e.target,id=el.id;
  if(id==='ledgerMonth')filter.month=el.value;
-else if(id==='ledgerAccount'){
-  if(el.value.startsWith('group:')){
-    const gid=el.value.slice(6);
-    filter.accounts=state.accounts.filter(a=>a.groupId===gid).map(a=>a.id);
-  } else {
-    filter.accounts=el.value?[el.value]:[];
-  }
-}
 
  else if(id==='advAmountOp')filter.amountOp=el.value;
  else if(id==='advAmountValue')filter.amountValue=el.value;
@@ -2211,7 +2787,7 @@ function checkRepaymentReminders(){
 function showRepaymentAlert(accounts){
   const rows=accounts.map(a=>`<label class="v41BatchItem" style="align-items:flex-start"><input type="checkbox" class="repayCheck" data-id="${E(a.id)}" style="margin-top:3px"><span style="flex:1;min-width:0"><b style="font-size:15px">${E(a.name)}</b><small style="color:#d94b4b;font-weight:bold">还款日：${a.dueDateStr}${a.daysLeft === 0 ? '（今天）' : `（还有 ${a.daysLeft} 天）`}</small></span></label>`).join('');
   
-  modal('💳 信用卡还款提醒',`<div class="notice" style="background:#fff0e8;border-color:#f5c7ac;color:#994c22;font-weight:bold">以下信用卡临近还款日，请确认还款状态：</div><div class="v41BatchList" style="margin-top:15px">${rows}</div><p class="smallHint">勾选“已还款”后，本月将不再提醒该卡。</p>`,`<button class="btn blue" id="btnConfirmRepay" disabled data-act="confirmRepayment">确认并关闭</button>`);
+  modal('信用卡还款提醒',`<div class="notice" style="background:#fff0e8;border-color:#f5c7ac;color:#994c22;font-weight:bold">以下信用卡临近还款日，请确认还款状态：</div><div class="v41BatchList" style="margin-top:15px">${rows}</div><p class="smallHint">勾选“已还款”后，本月将不再提醒该卡。</p>`,`<button class="btn blue" id="btnConfirmRepay" disabled data-act="confirmRepayment">确认并关闭</button>`);
   
   // 隐藏右上角的 X 和点击背景关闭功能，强制用户勾选
     isForceModal = true;
@@ -2245,7 +2821,7 @@ async function confirmRepayment(){
 
 $('csvFile').addEventListener('change',async e=>{let file=e.target.files?.[0];if(!file)return;try{await loadCsv(file)}catch(err){alert('读取CSV失败：'+err.message)}finally{e.target.value=''}});
 $('jsonFile').addEventListener('change',async e=>{let file=e.target.files?.[0];if(file)await restore(file);e.target.value=''});
-$('modal').addEventListener('click',e=>{if(e.target===$('modal') && !isForceModal)closeModal()});$('catOverlay').addEventListener('click',e=>{if(e.target===$('catOverlay'))closeCategoryPicker()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('txAccountPicker')&&!$('txAccountPicker').classList.contains('hide')){e.stopPropagation();closeTxAccountPicker()}else if(e.key==='Escape'&&!$('catOverlay').hidden)closeCategoryPicker();else if(e.key==='Escape'&&!$('modal').hidden)closeModal()});initStorage().then(()=>{setTimeout(checkRepaymentReminders, 500);});
+$('modal').addEventListener('click',e=>{if(e.target===$('modal') && !isForceModal)closeModal()});$('catOverlay').addEventListener('click',e=>{if(e.target===$('catOverlay'))closeCategoryPicker()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('txAccountPicker')&&!$('txAccountPicker').classList.contains('hide')){e.stopPropagation();closeTxAccountPicker()}else if(e.key==='Escape'&&!$('catOverlay').hidden)closeCategoryPicker();else if(e.key==='Escape'&&!$('modal').hidden)closeModal()});initStorage().then(()=>{setTimeout(()=>{ checkRepaymentReminders(); checkAnnualFeeReminders(); }, 500);});
 })();
 </script><script>if ('serviceWorker' in navigator) {window.addEventListener('load', function () {navigator.serviceWorker.register('./sw.js', {scope:'./'}).catch(function(err) {console.warn('离线缓存注册失败',err);});});}</script><script>
 /* iOS Safari fallback: the browser may ignore viewport zoom limits. */
