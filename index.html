@@ -322,7 +322,7 @@ const currencies=['CNY','HKD','USD','EUR','JPY','GBP','SGD','TWD','AUD','CAD'];c
 const fmt=(c,currency='CNY',signed=false)=>{let n=Number(c)/100;let v=Math.abs(n).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});return `${signed?(n>0?'+':n<0?'−':''):n<0?'−':''}${csym[currency]||currency+' '}${v}`};
 const cents=s=>{let v=Number(String(s??'').trim());if(!Number.isFinite(v)||Math.abs(v)>1e12)throw Error('金额无效或过大');return Math.round(v*100)};
 const initial=()=>({schema:4,accountGroups:[],accounts:[],transactions:[],customCategories:[],creditPools:[],groupOrder:{},categoryOrder:[],hiddenCategories:[],fxRates:{CNY:1},rewardRules:[],repaymentLogs:{},rewardHistory:[],annualFees:[],createdAt:new Date().toISOString()});
-const blankFilter=()=>({accounts:[],types:[],categories:[],tags:[],q:'',month:'',amountOp:'any',amountValue:'',dateOp:'any',dateStart:'',dateEnd:'',advanced:false, jumpType:'', jumpLabel:''});
+const blankFilter=()=>({accounts:[],types:[],categories:[],tags:[],payees:[],q:'',month:'',amountOp:'any',amountValue:'',dateOp:'any',dateStart:'',dateEnd:'',advanced:false, jumpType:'', jumpLabel:''});
 let db=null, storage='idb', state=initial(), page='accounts', accountDetail='', editing='', editKind='', txType='expense', filter=blankFilter(), ledgerScope='', accountSearch='', reportDateStart=curMonth()+'-01', reportDateEnd=now(), csvContext=null, toastTimer=0, creditPeriodMode='billing', creditPeriodCount=3, isForceModal=false, ledgerBatchMode=false, selectedTxIds=[], accountsScrollPos=0;
 function t(msg){const x=$('toast');x.textContent=msg;x.classList.add('on');clearTimeout(toastTimer);toastTimer=setTimeout(()=>x.classList.remove('on'),3500)}
 function openDB(){return new Promise((res,rej)=>{if(!window.indexedDB)return rej(Error('当前环境不支持IndexedDB'));const r=indexedDB.open('jianzhao-ledger-v2',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onerror=()=>rej(r.error);r.onsuccess=()=>res(r.result)})}
@@ -492,7 +492,7 @@ function manageGroups(){editKind='groupManager';const arr=(state.accountGroups||
     <button type="button" class="btn soft" data-act="v41CreateGroup" style="min-height:48px; white-space:nowrap;">新建分组</button>
   </div>
   <button type="button" class="btn" data-act="v41BatchGroupForm" style="width:100%; min-height:48px;">批量设置账户分组</button>
-</div><div class="v41GroupList sortGroupList" data-sort-list="group" data-currency="CNY">${arr.map(g=>`<div class="v41GroupRow sortItem sortGroup" data-sort-item="group" data-sort-currency="CNY" data-sort-group="${E(g.name)}" data-sort-key="${E(g.id)}"><span class="sortGrab" data-sort-handle="1" role="button" tabindex="0" aria-label="拖动分组排序">⋮⋮</span><span class="v41GroupName"><b>${E(g.name)}</b><small>${state.accounts.filter(a=>a.groupId===g.id).length} 个账户</small></span><button class="btn tiny" data-act="sortMove" data-id="${E(g.id)}" data-kind="group" data-dir="-1" title="上移">↑</button><button class="btn tiny" data-act="sortMove" data-id="${E(g.id)}" data-kind="group" data-dir="1" title="下移">↓</button><button class="btn tiny" data-act="v41RenameGroup" data-id="${E(g.id)}">重命名</button><button class="btn tiny" data-act="v41MoveGroup" data-id="${E(g.id)}">批量移动</button><button class="btn tiny warn" data-act="v41DeleteGroup" data-id="${E(g.id)}">删除</button></div>`).join('')||'<p class="smallHint">尚无分组，可在上方创建。</p>'}</div>`,`<button class="btn" data-act="closeModal">完成</button>`)}
+</div><div class="v41GroupList sortGroupList" data-sort-list="group" data-currency="CNY">${arr.map(g=>`<div class="v41GroupRow sortItem sortGroup" data-sort-item="group" data-sort-currency="CNY" data-sort-group="${E(g.name)}" data-sort-key="${E(g.id)}"><span class="sortGrab" data-sort-handle="1" role="button" tabindex="0" aria-label="拖动分组排序">⋮⋮</span><span class="v41GroupName"><b>${E(g.name)}</b><small>${state.accounts.filter(a=>a.groupId===g.id).length}个账户</small></span><button class="btn tiny" data-act="sortMove" data-id="${E(g.id)}" data-kind="group" data-dir="-1" title="上移">↑</button><button class="btn tiny" data-act="sortMove" data-id="${E(g.id)}" data-kind="group" data-dir="1" title="下移">↓</button><button class="btn tiny" data-act="v41RenameGroup" data-id="${E(g.id)}">重命名</button><button class="btn tiny" data-act="v41MoveGroup" data-id="${E(g.id)}">批量移动</button><button class="btn tiny warn" data-act="v41DeleteGroup" data-id="${E(g.id)}">删除</button></div>`).join('')||'<p class="smallHint">尚无分组，可在上方创建。</p>'}</div>`,`<button class="btn" data-act="closeModal">完成</button>`)}
 function groupKey(currency,group){return JSON.stringify([currency,group])}
 function renderCurrencyGroups(currency,accounts,ignoreCurrency=false){
  const byGroup=new Map();for(const a of accounts){const group=String(a.group||'').trim();if(!byGroup.has(group))byGroup.set(group,[]);byGroup.get(group).push(a)}
@@ -628,20 +628,20 @@ function accountRow(a){
     }
   }
   
-  return `<button class="accountRow" data-act="openAccount" data-id="${E(a.id)}" style="${bgStyle}"><span class="accountIcon ${colors(a.id)}" style="box-shadow:0 2px 10px ${v41HexRGBA(v41ThemeBase(a),.18)}">${accountIconContent(a)}</span><span style="min-width:0;flex:1"><span class="accountName">${E(a.name)}${rewardTag}</span></span><span class="accountMoney" style="color:${b<0?'#269b62':b>0?'#d94b4b':'#6e7785'}">${fmt(b,a.currency)}</span><span class="arrow">›</span></button>`
+  return `<button class="accountRow" data-act="openAccount" data-id="${E(a.id)}" style="${bgStyle}"><span class="accountIcon ${colors(a.id)}" style="box-shadow:0 2px 10px ${v41HexRGBA(v41ThemeBase(a),.18)}">${accountIconContent(a)}</span><span style="min-width:0;flex:1"><span class="accountName" style="display:flex;align-items:center;flex-wrap:wrap;">${E(a.name)}${rewardTag}</span></span><span class="accountMoney" style="color:${b<0?'#269b62':b>0?'#d94b4b':'#6e7785'}">${fmt(b,a.currency)}</span><span class="arrow">›</span></button>`
 }
 function accountMatches(a,q){let terms=q.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);if(!terms.length)return true;const text=[a.name,a.group,a.currency,a.kind].join(' ').toLocaleLowerCase();return terms.every(x=>text.includes(x))}
 function accountListsHtml(){
  const matches=state.accounts.filter(a=>!a.hidden&&accountMatches(a,accountSearch));
  // 不再按币种分类，所有账户统一按分组渲染
  const groupsHtml=renderCurrencyGroups('', matches, true);
- return `<div class="searchAccountCount">${accountSearch?'匹配 ':''}${matches.length} 个账户${accountSearch?' · 按名称、分组或币种搜索':''}</div>${groupsHtml||`<div class="card empty">${accountSearch?'没有找到匹配的账户':'尚无可见账户，可以新建账户或导入 MoneyWiz CSV。'}</div>`}`
+ return `<div class="searchAccountCount">${accountSearch?'匹配 ':''}${matches.length}个账户${accountSearch?' · 按名称、分组或币种搜索':''}</div>${groupsHtml||`<div class="card empty">${accountSearch?'没有找到匹配的账户':'尚无可见账户，可以新建账户或导入 MoneyWiz CSV。'}</div>`}`
 }
 function refreshAccountSearch(){let node=$('accountsBody');if(page==='accounts'&&!accountDetail&&node)node.innerHTML=accountListsHtml()}
 function renderAccounts(){
  const w=wealthSummary();
- const hero=`<div class="hero wealthHero"><button class="wealthTop" data-act="wealthDetail" data-id="net"><div class="eyebrow">我的账户 · 净资产（折合人民币）</div><div <div class="mainNumber" style="color:${w.net>0?'#d94b4b':w.net<0?'#269b62':'#1d2330'}">${w.complete?fmt(w.net,'CNY'):'—'}</div><div class="wealthHint">点击查看净资产构成 ›</div></button><div class="wealthStats"><button class="wealthMetric" data-act="wealthDetail" data-id="asset"><small>总资产</small><strong>${w.complete?fmt(w.assets,'CNY'):'—'}</strong></button><button class="wealthMetric liability" data-act="wealthDetail" data-id="liability"><small>总负债</small><strong>${w.complete?fmt(w.liabilities,'CNY'):'—'}</strong></button></div>${w.missing.length?`<div class="wealthNotice">未设置 ${E(w.missing.join('、'))} 对人民币汇率，暂不显示不完整的总额。可在「设置 → 管理报表汇率」补充。</div>`:''}<div class="meta">${state.accounts.length} 个账户 · 不限制数量 · ${groupNames().length} 个自定义分组 · ${w.rows.length} 个账户参与资产负债统计 · 仅本地保存</div></div>`;
- const pools=(state.creditPools||[]).length?`<div class="sectionTitle" style="margin:20px 0;"><h2>共享信用额度</h2><button class="btn tiny soft" data-act="newPool">管理额度池</button></div><div class="stack">${state.creditPools.map(p=>`<button class="poolCard" data-act="viewPoolCards" data-id="${E(p.id)}"><div><b>${E(p.name)}</b><small>${E(p.currency)} · ${state.accounts.filter(a=>a.poolId===p.id).length} 张卡</small></div><div class="poolRight"><b>${fmt(p.limit-poolUsed(p),p.currency)}</b><small>总额 ${fmt(p.limit,p.currency)}</small></div></button>`).join('')}</div>`:'';
+ const hero=`<div class="hero wealthHero"><button class="wealthTop" data-act="wealthDetail" data-id="net"><div class="eyebrow">我的账户 · 净资产（折合人民币）</div><div <div class="mainNumber" style="color:${w.net>0?'#d94b4b':w.net<0?'#269b62':'#1d2330'}">${w.complete?fmt(w.net,'CNY'):'—'}</div><div class="wealthHint">点击查看净资产构成 ›</div></button><div class="wealthStats"><button class="wealthMetric" data-act="wealthDetail" data-id="asset"><small>总资产</small><strong>${w.complete?fmt(w.assets,'CNY'):'—'}</strong></button><button class="wealthMetric liability" data-act="wealthDetail" data-id="liability"><small>总负债</small><strong>${w.complete?fmt(w.liabilities,'CNY'):'—'}</strong></button></div>${w.missing.length?`<div class="wealthNotice">未设置 ${E(w.missing.join('、'))} 对人民币汇率，暂不显示不完整的总额。可在「设置 → 管理报表汇率」补充。</div>`:''}<div class="meta">${state.accounts.length}个账户 · 不限制数量 · ${groupNames().length}个自定义分组 · ${w.rows.length}个账户参与资产负债统计 · 仅本地保存</div></div>`;
+ const pools=(state.creditPools||[]).length?`<div class="sectionTitle" style="margin:20px 0;"><h2>共享信用额度</h2><button class="btn tiny soft" data-act="newPool">管理额度池</button></div><div class="stack">${state.creditPools.map(p=>`<button class="poolCard" data-act="viewPoolCards" data-id="${E(p.id)}"><div><b>${E(p.name)}</b><small>${E(p.currency)} · ${state.accounts.filter(a=>a.poolId===p.id).length}张卡</small></div><div class="poolRight"><b>${fmt(p.limit-poolUsed(p),p.currency)}</b><small>总额 ${fmt(p.limit,p.currency)}</small></div></button>`).join('')}</div>`:'';
  const groupBar=`<div class="sectionTitle" style="margin:20px 0; align-items:center;"><h2>账户列表</h2><div class="accountTools" style="align-items:center;"><button class="btn tiny" data-act="sortAccounts">拖动排序</button><button class="btn tiny" data-act="manageGroups">管理分组</button><button class="btn tiny" data-act="viewAllAnnualFees">年费看板</button><button class="btn tiny" data-act="newAccount">新建账户</button></div></div><div class="accountSearch"><span>${ic('search')}</span><input id="accountSearchQ" type="search" autocomplete="off" placeholder="搜索账户名称、分组、币种或卡尾号" value="${E(accountSearch)}" aria-label="搜索账户"></div>`;
  return `${storage==='unavailable'?'<div class="notice">当前浏览器无法持久保存数据。请用正常浏览器或 HTTPS 安装 PWA 后再导入账本。</div>':''}${hero}${pools}${groupBar}<div id="accountsBody">${accountListsHtml()}</div><div class="pageFoot">请定期导出完整 JSON 备份，切勿将此浏览器作为唯一账本副本</div>`
 }
@@ -756,7 +756,7 @@ function viewAllAnnualFees(){
         progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">已刷 ${fmt(progress, a.currency)} / ${fmt(f.waiverTarget, a.currency)} ${f.useManual?'(手动)':''}</div><div class="barTrack" style="height:6px"><div class="barFill" style="width:${pct}%"></div></div>`;
       } else if (f.waiverType === 'count') {
         const pct = Math.min(100, Math.round(progress / (f.waiverTarget||1) * 100));
-        progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">已刷 ${progress} / ${f.waiverTarget} 笔 ${f.useManual?'(手动)':''}</div><div class="barTrack" style="height:6px"><div class="barFill" style="width:${pct}%"></div></div>`;
+        progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">已刷 ${progress} / ${f.waiverTarget}笔 ${f.useManual?'(手动)':''}</div><div class="barTrack" style="height:6px"><div class="barFill" style="width:${pct}%"></div></div>`;
       } else if (f.waiverType === 'none') {
         progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px;color:#d94b4b">刚性年费</div>`;
       } else {
@@ -848,7 +848,7 @@ function checkAnnualFeeReminders(){
       const progress = calcFeeProgress(f);
       let progressText = '';
       if (f.waiverType === 'amount') progressText = `已刷 ${fmt(progress,a.currency)} / ${fmt(f.waiverTarget,a.currency)}`;
-      else if (f.waiverType === 'count') progressText = `已刷 ${progress} 笔 / ${f.waiverTarget} 笔`;
+      else if (f.waiverType === 'count') progressText = `已刷 ${progress}笔 / ${f.waiverTarget}笔`;
       else if (f.waiverType === 'none') progressText = '刚性年费';
       
       return `<div style="border-bottom:1px solid #eef0f4;padding:10px 14px">
@@ -876,7 +876,7 @@ const feeBlock = fees.map(f => {
     progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">已刷 ${fmt(progress, a.currency)} / ${fmt(f.waiverTarget, a.currency)} ${f.useManual?'(手动)':''}</div><div class="barTrack" style="height:6px"><div class="barFill" style="width:${pct}%"></div></div>`;
   } else if (f.waiverType === 'count') {
     const pct = Math.min(100, Math.round(progress / (f.waiverTarget||1) * 100));
-    progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">已刷 ${progress} / ${f.waiverTarget} 笔 ${f.useManual?'(手动)':''}</div><div class="barTrack" style="height:6px"><div class="barFill" style="width:${pct}%"></div></div>`;
+    progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px">已刷 ${progress} / ${f.waiverTarget}笔 ${f.useManual?'(手动)':''}</div><div class="barTrack" style="height:6px"><div class="barFill" style="width:${pct}%"></div></div>`;
   } else if (f.waiverType === 'none') {
     progressHtml = `<div class="subtle" style="margin:4px 0;font-size:11px;color:#d94b4b">刚性年费</div>`;
   } else {
@@ -966,7 +966,7 @@ ${(a.cardLimit||p)?`<div class="kvline"><span>当前可用额度</span><b>${fmt(
 return `<div class="backRow"><button class="linkStyle" data-act="backAccounts">${ic('left')} 返回账户</button><button class="btn tiny soft" data-act="accountActions" data-id="${E(a.id)}"> 账户操作</button></div><div class="detailHead v41DetailHead" data-v41-theme="${E(a.id)}" style="${v41GradientStyle(a)}"><div class="detailIdentity"><span class="accountIcon ${colors(a.id)}">${accountIconContent(a)}</span><div class="name">${E(a.name)}</div></div><div class="subtle" style="margin-top:5px">${E(a.currency)} · ${E(a.kind==='credit'?'信用卡':a.kind==='wallet'?'钱包':a.kind==='loan'?'贷款':'个人账户')}${a.includeInWealth===false?' · 不计入资产负债统计':''}</div><div class="balance" style="color:${b>0?'#d94b4b':b<0?'#269b62':'#1d2330'}">${fmt(b,a.currency)}</div><div class="miniStats"><span>本月收入 <b style="color:#d94b4b">+${fmt(inc,a.currency)}</b></span><span>本月支出 <b style="color:#269b62">${fmt(out,a.currency)}</b></span></div></div><div class="toolbar accountToolbar">
 <button class="btn soft" data-act="newTx" data-id="${E(a.id)}">记一笔</button>
 <button class="btn soft" data-act="searchAccountTx" data-id="${E(a.id)}">查交易</button>
-</div>${rewardRulesFor(a.id).length?`<div class="sectionTitle"><h2>消费奖励</h2><button class="btn tiny soft" data-act="newRewardRule" data-id="${E(a.id)}">新增规则</button></div>${rewardBlock}`:`<div class="sectionTitle"><h2>消费奖励</h2><button class="btn tiny soft" data-act="newRewardRule" data-id="${E(a.id)}">新增规则</button></div><div class="notice blueTint">尚未设置消费奖励规则。可设置起止日期、目标档位和统计分类。</div>`}${cc?`<div style="margin-top:14px">${cc}</div>`:''}${a.kind==='credit'?feeCard:''}<div class="sectionTitle"><h2>交易流水</h2><span class="subtle">${txs.length} 笔</span></div><div class="card">${txs.length?txs.map(x=>txRow(x,a.id)).join(''):'<div class="empty">暂无交易记录</div>'}</div>`}
+</div>${rewardRulesFor(a.id).length?`<div class="sectionTitle"><h2>消费奖励</h2><button class="btn tiny soft" data-act="newRewardRule" data-id="${E(a.id)}">新增规则</button></div>${rewardBlock}`:`<div class="sectionTitle"><h2>消费奖励</h2><button class="btn tiny soft" data-act="newRewardRule" data-id="${E(a.id)}">新增规则</button></div><div class="notice blueTint">尚未设置消费奖励规则。可设置起止日期、目标档位和统计分类。</div>`}${cc?`<div style="margin-top:14px">${cc}</div>`:''}${a.kind==='credit'?feeCard:''}<div class="sectionTitle"><h2>交易流水</h2><span class="subtle">${txs.length}笔</span></div><div class="card">${txs.length?txs.map(x=>txRow(x,a.id)).join(''):'<div class="empty">暂无交易记录</div>'}</div>`}
 
 function txLabel(x){if(x.type==='transfer')return '账户转账';if(x.type==='loan_repayment')return '贷款还款';if(x.type.startsWith('transfer_'))return '转账记录';return x.description||x.category||({income:'收入',expense:'支出',refund:'退款',adjustment:'余额调整'})[x.type]||'交易'}
 function sortTx(a,b){return (b.date+' '+(b.time||'')).localeCompare(a.date+' '+(a.time||''))||String(b.created||'').localeCompare(String(a.created||''))}
@@ -1018,6 +1018,7 @@ function filtered(){const f=filter;const quick=parseQuick(f.q);const threshold=N
   if(!ledgerScope&&f.accounts.length&&!f.accounts.some(a=>x.from===a||x.to===a))return false;
   if(f.types.length&&!f.types.includes(txSearchType(x)))return false;
   if(f.categories.length&&!matchesSelectedCategory(x,f.categories))return false;
+if(f.payees.length && !f.payees.includes(x.payee)) return false;
   if(f.tags.length&&!f.tags.some(tag=>(x.tags||[]).includes(tag)))return false;
   if(f.month&&!x.date.startsWith(f.month))return false;
   const value=txSearchAmount(x);
@@ -1028,6 +1029,118 @@ function filtered(){const f=filter;const quick=parseQuick(f.q);const threshold=N
   const str=[x.description,x.note,x.payee,x.category,tagsText(x),...(x.splits||[]).map(v=>v.category)].filter(Boolean).join(' ').toLocaleLowerCase();
   return quick.text.every(word=>str.includes(word))
  }).sort(sortTx)}
+function renderDrilldownSummary(list, filter){
+  if(!list.length) return '<div class="notice blueTint">当前筛选没有匹配交易。</div>';
+  
+  let totalAmount = 0;
+  const groupMap1 = new Map(); // 维度1：交易对方 / 转出账户
+  const groupMap2 = new Map(); // 维度2：账户 / 转入账户
+  
+  const addToMap = (map, key, displayName, amount, idType) => {
+    let item = map.get(key) || { name: displayName, amount: 0, idType, id: key };
+    item.amount += amount;
+    map.set(key, item);
+  };
+
+  for(const x of list){
+    const a = account(x.from);
+    const cur = a?.currency || 'CNY';
+    const rate = cur === 'CNY' ? 1 : (Number(state.fxRates?.[cur]) || 1);
+    
+    let val = 0;
+    if(filter.jumpType === 'cashback' || filter.jumpType === 'discount') {
+      val = Math.round((x.discount || x.amount) * rate);
+      totalAmount += val;
+      addToMap(groupMap1, x.payee || '未知对象', x.payee || '未知对象', val, 'payee');
+      addToMap(groupMap2, x.from, aName(x.from), val, 'account');
+    } else if (filter.jumpType === 'transfer_discount' || filter.jumpType === 'transfer_fee' || filter.jumpType === 'transfer_other') {
+      val = Math.round(Math.abs(x.toAmount - x.amount) * rate);
+      totalAmount += val;
+      addToMap(groupMap1, x.from, aName(x.from), val, 'account');
+      addToMap(groupMap2, x.to, aName(x.to), val, 'account');
+    } else if (filter.jumpType.startsWith('loan_')) {
+      val = Math.round((x.interest || x.principal || x.loanFee || 0) * rate);
+      totalAmount += val;
+      addToMap(groupMap1, x.to, aName(x.to), val, 'account');
+      addToMap(groupMap2, x.from, aName(x.from), val, 'account');
+    }
+  }
+
+  const renderRankList = (map, title, isExpense) => {
+    // 排序取前 100 防止卡顿，实际通常没这么多
+    const arr = [...map.values()].filter(x=>x.amount>0).sort((a,b)=>b.amount-a.amount);
+    if(!arr.length) return '';
+    const max = arr[0].amount;
+    
+        const rows = arr.map(item => {
+      const pct = Math.round(item.amount / max * 100);
+      // 检查当前是否处于选中状态
+      const isSelected = (item.idType === 'account' && filter.accounts.includes(item.id)) || 
+                         (item.idType === 'payee' && filter.q === item.id);
+      const bg = isSelected ? 'background:#eef6ff; border-radius:8px; padding:6px 8px; margin:-6px -8px;' : '';
+
+            const textColor = isExpense ? '#269b62' : '#d94b4b';
+
+      return `<div style="margin-top:14px;">
+        <div style="${bg} display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px;">
+          <span data-act="drilldownFilter" data-type="${item.idType}" data-id="${E(item.id)}" style="color:#29313c;font-size:13px;font-weight:600;cursor:pointer;">${E(item.name)}</span>
+          <b style="color:${textColor};font-size:14px;">${fmt(item.amount, 'CNY')}</b>
+        </div>
+        <div class="barTrack" style="height:8px;background:#edf1f6;border-radius:4px;">
+          <!-- 这里直接使用全局的 .barFill，它会自动应用系统统一的蓝色渐变 -->
+          <div class="barFill" style="width:${pct}%;border-radius:4px;"></div>
+        </div>
+      </div>`;
+    });
+    
+    const top5 = rows.slice(0, 5).join('');
+    const rest = rows.length > 5 ? `<details class="rank-more" style="margin-top:16px; border-top:1px dashed #eef0f4; padding-top:12px;">
+      <summary style="cursor:pointer; color:#1681ed; font-size:13px; outline:none;">
+        <span class="rank-txt-open">展开其余${rows.length - 5}项 ▾</span>
+        <span class="rank-txt-close" style="display:none;">收起 ▴</span>
+      </summary>
+      <div>${rows.slice(5).join('')}</div>
+    </details>` : '';
+    
+    return `<div style="margin-top:20px;">
+      <div style="font-size:13px;font-weight:bold;color:#516378;border-bottom:1px solid #eef0f4;padding-bottom:6px;">${title}</div>
+      ${top5}${rest}
+    </div>`;
+  };
+
+  const isExp = ['loan_interest', 'loan_fee', 'transfer_fee'].includes(filter.jumpType);
+  const color = isExp ? '#269b62' : '#d94b4b';
+  
+  let title1 = '按交易对方统计', title2 = '按账户统计';
+  if(filter.jumpType.startsWith('transfer_')) { title1 = '按转出账户统计'; title2 = '按转入账户统计'; }
+  if(filter.jumpType.startsWith('loan_')) { title1 = '按贷款账户统计'; title2 = '按还款账户统计'; }
+
+    let headerHtml = '';
+  const isFocused = filter.accounts.length === 1 || filter.q;
+  if(isFocused) {
+    const focusName = filter.accounts.length === 1 ? aName(filter.accounts[0]) : filter.q;
+    headerHtml = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;background:#eef6ff;padding:12px;border-radius:12px;border:1px solid #d6e6f7;">
+      <span style="font-size:13px;font-weight:bold;color:#1b82ee;">目前聚焦：${E(focusName)}</span>
+      <button class="btn tiny" data-act="clearSubFilter" style="background:white;color:#1b82ee;border-color:#1b82ee;">返回全部排行</button>
+    </div>`;
+  }
+
+  return `<style>
+    details.rank-more[open] .rank-txt-open { display: none !important; }
+    details.rank-more[open] .rank-txt-close { display: inline !important; }
+    details.rank-more summary::-webkit-details-marker { display: none; }
+    details.rank-more summary { list-style: none; }
+  </style>
+  <div class="card settingsCard" style="padding:18px;">
+    ${headerHtml}
+    <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #eef0f4;padding-bottom:14px;">
+      <span style="font-size:14px;color:#29313c;font-weight:bold;">${E(filter.jumpLabel)}合计</span>
+      <b style="font-size:20px;color:${color};font-variant-numeric:tabular-nums;">${fmt(totalAmount, 'CNY')}</b>
+    </div>
+    ${renderRankList(groupMap1, title1, isExp)}
+    ${renderRankList(groupMap2, title2, isExp)}
+  </div>`;
+}
 function ledgerSummary(list){
   const accountId=ledgerScope||(filter.accounts.length===1?filter.accounts[0]:'');
   let v={count:0,gross:0,income:0,expense:0,refund:0,transfer:0,adjustment:0,balanceDelta:0};
@@ -1061,7 +1174,7 @@ function ledgerSummary(list){
   const net=v.income-v.expense+v.refund;
   const cell=(label,value,cls='')=>`<div class="ledgerTotal"><small>${label}</small><b class="${cls}">${fmt(value,'CNY',true)}</b></div>`;
   
-  return `<section><h3>CNY 折算 · ${v.count} 笔</h3><div class="ledgerTotalGrid">${cell('收入合计',v.income,'plus')}${cell('支出合计',-v.expense,'minus')}${cell('退款合计',v.refund,'plus')}${cell('净收支（不含转账）',net,'net')}${accountId?cell('该账户余额变化（含转账、调整）',v.balanceDelta,'net'):''}</div></section><p class="smallHint">汇总全部匹配交易，金额已统一按汇率折算为人民币；转账与余额调整不计入净收支。若选多账户，跨账户转账在结果中只计一笔。</p>`;
+  return `<section><h3>CNY 折算 · ${v.count}笔</h3><div class="ledgerTotalGrid">${cell('收入合计',v.income,'plus')}${cell('支出合计',-v.expense,'minus')}${cell('退款合计',v.refund,'plus')}${cell('净收支（不含转账）',net,'net')}${accountId?cell('该账户余额变化（含转账、调整）',v.balanceDelta,'net'):''}</div></section><p class="smallHint">汇总全部匹配交易，金额已统一按汇率折算为人民币；转账与余额调整不计入净收支。若选多账户，跨账户转账在结果中只计一笔。</p>`;
 }
 const txTypes=[['income','收入'],['expense','支出'],['transfer','转账'],['loan_repayment','贷款还款'],['refund','退款'],['adjustment','余额调整']];
 function searchSelectedAccount(){return ledgerScope||(filter.accounts.length===1?filter.accounts[0]:'')}
@@ -1109,14 +1222,24 @@ function accountSelectorChecklist(selected){
   
   return `<details class="advDetails"><summary>账户（可多选）${selected.length?' · 已选 '+selected.length+' 项':''}</summary><div class="advOptions">${html}</div></details>`;
 }
-function advancedForm(){const f=filter;if(!f.advanced)return '<div class="advPanel" id="advancedFields" hidden></div>';const cat=categoryFilterOptions(),tags=tagFilterOptions();return `<div class="advPanel" id="advancedFields" ${f.advanced?'':'hidden'}><div class="advRow"><div><label class="inputLabel">金额比较</label><select class="field" id="advAmountOp">${[['any','不限'],['gt','大于 >'],['lt','小于 <'],['eq','等于 ='],['approx','约等于 ~（±10%，至少1元）']].map(([v,t])=>`<option value="${v}" ${f.amountOp===v?'selected':''}>${t}</option>`).join('')}</select></div><div><label class="inputLabel">金额（按账户原币种）</label><input class="field" id="advAmountValue" type="number" inputmode="decimal" step="0.01" min="0" placeholder="例如 100" value="${E(f.amountValue)}"></div></div><div class="advRow"><div><label class="inputLabel">日期条件</label><select class="field" id="advDateOp">${[['any','不限'],['exact','精确日期'],['after','此日期之后（不含当天）'],['before','此日期之前（不含当天）'],['range','日期范围（含首尾）']].map(([v,t])=>`<option value="${v}" ${f.dateOp===v?'selected':''}>${t}</option>`).join('')}</select></div><div><label class="inputLabel">日期</label><input class="field" id="advDateStart" type="date" value="${E(f.dateStart)}"></div></div><div id="advDateEndWrap" ${f.dateOp==='range'?'':'hidden'}><label class="inputLabel">结束日期（含当天）</label><input class="field" id="advDateEnd" type="date" value="${E(f.dateEnd)}"></div><p class="smallHint">高级金额、日期条件与搜索框内容同时生效；不同条件需全部满足。</p>${!ledgerScope?accountSelectorChecklist(f.accounts):''}${selectorChecklist('type',txTypes,f.types,'交易类型（可多选）')}${selectorChecklist('category',cat,f.categories,'分类（可多选）')}${selectorChecklist('tag',tags,f.tags,'标签（可多选）')}</div>`}
+function advancedForm(){const f=filter;if(!f.advanced)return '<div class="advPanel" id="advancedFields" hidden></div>';const cat=categoryFilterOptions(),tags=tagFilterOptions();const payees = [...new Set(state.transactions.map(x=>x.payee).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-CN')).map(x=>[x,x]);return `<div class="advPanel" id="advancedFields" ${f.advanced?'':'hidden'}><div class="advRow"><div><label class="inputLabel">金额比较</label><select class="field" id="advAmountOp">${[['any','不限'],['gt','大于 >'],['lt','小于 <'],['eq','等于 ='],['approx','约等于 ~（±10%，至少1元）']].map(([v,t])=>`<option value="${v}" ${f.amountOp===v?'selected':''}>${t}</option>`).join('')}</select></div><div><label class="inputLabel">金额（按账户原币种）</label><input class="field" id="advAmountValue" type="number" inputmode="decimal" step="0.01" min="0" placeholder="例如 100" value="${E(f.amountValue)}"></div></div><div class="advRow"><div><label class="inputLabel">日期条件</label><select class="field" id="advDateOp">${[['any','不限'],['exact','精确日期'],['after','此日期之后（不含当天）'],['before','此日期之前（不含当天）'],['range','日期范围（含首尾）']].map(([v,t])=>`<option value="${v}" ${f.dateOp===v?'selected':''}>${t}</option>`).join('')}</select></div><div><label class="inputLabel">日期</label><input class="field" id="advDateStart" type="date" value="${E(f.dateStart)}"></div></div><div id="advDateEndWrap" ${f.dateOp==='range'?'':'hidden'}><label class="inputLabel">结束日期（含当天）</label><input class="field" id="advDateEnd" type="date" value="${E(f.dateEnd)}"></div><p class="smallHint">高级金额、日期条件与搜索框内容同时生效；不同条件需全部满足。</p>${!ledgerScope?accountSelectorChecklist(f.accounts):''}${selectorChecklist('type',txTypes,f.types,'交易类型（可多选）')}${selectorChecklist('category',cat,f.categories,'分类（可多选）')}${selectorChecklist('payee',payees,f.payees,'交易对方（可多选）')}${selectorChecklist('tag',tags,f.tags,'标签（可多选）')}</div>`}
 function renderLedger(){const l=filtered(), f=filter,accountId=searchSelectedAccount(),isAccount=!!ledgerScope;
 const groupOptions=(state.accountGroups||[]).map(g=>`<option value="group:${E(g.id)}" ${f.accounts.length===1&&f.accounts[0]==='group:'+g.id?'selected':''}>分组：${E(g.name)}</option>`).join('');
 const accOptions=state.accounts.map(a=>`<option value="${E(a.id)}" ${f.accounts.length===1&&f.accounts[0]===a.id?'selected':''}>${E(a.name)}</option>`).join('');
-const options=groupOptions+accOptions;return `${isAccount?`<div class="backRow"><button class="linkStyle" data-act="backFromAccountSearch">${ic('left')} 返回 ${E(aName(ledgerScope))}</button><button class="btn tiny" data-act="toGlobalSearch">全部交易</button></div>`:''}${filter.jumpLabel ? `<div class="notice blueTint" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span>正在查看：<b>${E(filter.jumpLabel)}</b> (时间范围：${E(filter.dateStart)} 至 ${E(filter.dateEnd)})</span><button class="btn tiny" data-act="clearJumpFilter">查看全部流水</button></div>` : ''}<div class="sectionTitle" style="margin-top:0"><h2>${isAccount?'账户交易搜索':'全部交易'}</h2><span class="subtle" id="ledgerCount">共 ${l.length} 笔</span></div>${isAccount?`<div class="notice blueTint">当前仅搜索「${E(aName(ledgerScope))}」的交易；信用卡还款属于转账，不计收入。</div>`:''}<div class="toolbar ledgerToolbar"><input class="sbox" type="search" id="searchQ" placeholder="描述、备注、商户、分类、标签；可输入 >100 / 2026/11/01-2026/11/15" value="${E(f.q)}" autocomplete="off" style="min-height:48px;">${isAccount?'':`<button type="button" class="field" data-act="openLedgerAccountPicker" style="text-align:left;display:flex;justify-content:space-between;align-items:center;min-height:48px;padding:11px 13px;background:white;color:#344052;font-size:14px;flex:1 1 100%;max-width:100%;">
+const options=groupOptions+accOptions;return `${isAccount?`<div class="backRow"><button class="linkStyle" data-act="backFromAccountSearch">${ic('left')} 返回 ${E(aName(ledgerScope))}</button><button class="btn tiny" data-act="toGlobalSearch">全部交易</button></div>`:''}${filter.jumpLabel ? `<div class="notice blueTint" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+  <span>正在查看：<b>${E(filter.jumpLabel)}</b> 
+    ${filter.accounts.length===1 && filter.accounts[0] !== 'group:' ? ` · 聚焦：<b>${E(aName(filter.accounts[0]))}</b>` : ''}
+    ${filter.q && filter.jumpType ? ` · 聚焦：<b>${E(filter.q)}</b>` : ''}
+    <br><small style="color:#7d8da3">${E(filter.dateStart)} 至 ${E(filter.dateEnd)}</small>
+  </span>
+  <div style="display:flex;gap:8px;">
+    ${(filter.accounts.length>0 || filter.q) && filter.jumpType ? `<button class="btn tiny soft" data-act="clearSubFilter">取消聚焦</button>` : ''}
+    <button class="btn tiny" data-act="clearJumpFilter">全部流水</button>
+  </div>
+</div>` : ''}<div class="sectionTitle" style="margin-top:0"><h2>${isAccount?'账户交易搜索':'全部交易'}</h2><span class="subtle" id="ledgerCount">共 ${l.length}笔</span></div>${isAccount?`<div class="notice blueTint">当前仅搜索「${E(aName(ledgerScope))}」的交易；信用卡还款属于转账，不计收入。</div>`:''}<div class="toolbar ledgerToolbar"><input class="sbox" type="search" id="searchQ" placeholder="描述、备注、商户、分类、标签；可输入 >100 / 2026/11/01-2026/11/15" value="${E(f.q)}" autocomplete="off" style="min-height:48px;">${isAccount?'':`<button type="button" class="field" data-act="openLedgerAccountPicker" style="text-align:left;display:flex;justify-content:space-between;align-items:center;min-height:48px;padding:11px 13px;background:white;color:#344052;font-size:14px;flex:1 1 100%;max-width:100%;">
   <span>${f.accounts.length>1?'已选多个账户':(f.accounts.length===1?aName(f.accounts[0]):'全部账户')}</span>
   <span style="color:#7d93aa"></span>
-</button>`}<input id="ledgerMonth" type="month" value="${E(f.month)}" aria-label="月份筛选"></div><div class="searchQuickTypes" id="quickTypes">${[['','全部'],...txTypes].map(([v,label])=>`<button type="button" data-act="quickType" data-id="${v||'_all'}" class="quickType ${(!v&&!f.types.length)||(v&&f.types.length===1&&f.types[0]===v)?'on':''}">${label}</button>`).join('')}</div><div class="searchActions"><button class="btn tiny" data-act="toggleAdvanced" aria-expanded="${f.advanced}">高级筛选${f.advanced?' ▴':' ▾'}</button><button class="btn tiny" data-act="resetSearch">清除所有筛选</button><button class="btn tiny ${ledgerBatchMode?'blue':''}" data-act="toggleBatchMode">${ledgerBatchMode?'退出批量':'批量操作'}</button><span class="subtle">多关键词默认同时匹配</span></div>${ledgerBatchMode?`<div class="notice blueTint" style="display:flex;justify-content:space-between;align-items:center;margin:10px 0"><span>已选择 <b>${selectedTxIds.length}</b> 笔交易</span><button class="btn tiny blue" data-act="batchUpdateCategory">修改分类</button></div>`:''}${advancedForm()}<div class="notice blueTint" style="margin:12px 0">快捷语法：<b>&gt;100</b>、<b>&lt;50</b>、<b>=75</b>、<b>~200</b>；<b>2026/11/15</b>、<b>&gt;2026/11/15</b>、<b>&lt;2026/11/15</b>、<b>2026/11/01-2026/11/15</b>。可输入「瑞幸 &gt;100 2026/11/01-2026/11/15」组合查询。</div><div class="ledgerTotals" id="ledgerTotals">${ledgerSummary(l)}</div><div class="card" id="ledgerResults">${l.length?l.slice(0,500).map(x=>txRow(x,accountId)).join(''):'<div class="empty">没有找到匹配的交易记录</div>'}${l.length>500?'<div class="empty">只显示最新500笔，请使用搜索缩小范围。</div>':''}</div>`}
+</button>`}<input id="ledgerMonth" type="month" value="${E(f.month)}" aria-label="月份筛选"></div><div class="searchQuickTypes" id="quickTypes">${[['','全部'],...txTypes].map(([v,label])=>`<button type="button" data-act="quickType" data-id="${v||'_all'}" class="quickType ${(!v&&!f.types.length)||(v&&f.types.length===1&&f.types[0]===v)?'on':''}">${label}</button>`).join('')}</div><div class="searchActions"><button class="btn tiny" data-act="toggleAdvanced" aria-expanded="${f.advanced}">高级筛选${f.advanced?' ▴':' ▾'}</button><button class="btn tiny" data-act="resetSearch">清除所有筛选</button><button class="btn tiny ${ledgerBatchMode?'blue':''}" data-act="toggleBatchMode">${ledgerBatchMode?'退出批量':'批量操作'}</button><span class="subtle">多关键词默认同时匹配</span></div>${ledgerBatchMode?`<div class="notice blueTint" style="display:flex;justify-content:space-between;align-items:center;margin:10px 0"><span>已选择 <b>${selectedTxIds.length}</b>笔交易</span><button class="btn tiny blue" data-act="batchUpdateCategory">修改分类</button></div>`:''}${advancedForm()}<div class="notice blueTint" style="margin:12px 0">快捷语法：<b>&gt;100</b>、<b>&lt;50</b>、<b>=75</b>、<b>~200</b>；<b>2026/11/15</b>、<b>&gt;2026/11/15</b>、<b>&lt;2026/11/15</b>、<b>2026/11/01-2026/11/15</b>。可输入「瑞幸 &gt;100 2026/11/01-2026/11/15」组合查询。</div><div class="ledgerTotals" id="ledgerTotals">${filter.jumpType ? renderDrilldownSummary(l, filter) : ledgerSummary(l)}</div><div class="card" id="ledgerResults">${l.length?l.slice(0,500).map(x=>txRow(x,accountId)).join(''):'<div class="empty">没有找到匹配的交易记录</div>'}${l.length>500?'<div class="empty">只显示最新500笔，请使用搜索缩小范围。</div>':''}</div>`}
 function refreshFilterLabels(){const quick=$('quickTypes');if(quick)quick.querySelectorAll('button').forEach(btn=>{const ty=btn.dataset.id==='\u005fall'?'':btn.dataset.id;btn.classList.toggle('on',ty?filter.types.length===1&&filter.types[0]===ty:!filter.types.length)});
  const s=$('ledgerAccount');if(s)s.value=filter.accounts.length===1?filter.accounts[0]:'';
  $('advancedFields')?.querySelectorAll('details.advDetails').forEach(d=>{let n=d.querySelectorAll('input:checked').length;const summary=d.querySelector('summary');if(summary){let original=summary.textContent.replace(/ · 已选 \d+ 项$/,'');summary.textContent=original+(n?' · 已选 '+n+' 项':'')}})
@@ -1148,13 +1271,17 @@ function renderReports(){
 <div class="settingsActions" style="margin-bottom:12px"><button class="btn ${isToday?'blue':''}" data-act="reportQuickDate" data-id="today" style="height:40px; font-size:15px; padding:0 16px;">今日</button><button class="btn ${isThisMonth?'blue':''}" data-act="reportQuickDate" data-id="month" style="height:40px; font-size:15px; padding:0 16px;">本月</button><button class="btn ${isThisYear?'blue':''}" data-act="reportQuickDate" data-id="year" style="height:40px; font-size:15px; padding:0 16px;">今年</button></div>
 <div class="flexFields" style="margin-bottom:12px"><div><input class="field" type="date" id="reportDateStart" value="${E(reportDateStart)}" style="min-height:40px;padding:8px 12px"></div><div><input class="field" type="date" id="reportDateEnd" value="${E(reportDateEnd)}" style="min-height:40px;padding:8px 12px"></div></div>
 <div class="summaryTriplet"><div class="miniCard"><small>收入</small><b style="color:#d94b4b">${fmt(inc,currency)}</b></div><div class="miniCard"><small>实际支出</small><b style="color:#269b62">${fmt(out,currency)}</b></div><div class="miniCard"><small>结余</small><b style="color:${(inc-out)>=0?'#d94b4b':'#269b62'}">${fmt(inc-out,currency)}</b></div></div>
-<div class="summaryTriplet"><div class="miniCard" data-act="jumpToDetail" data-id="cashback"><small>银行返现</small><b style="color:#d94b4b">${fmt(list.filter(x=>x.type==='income'&&(x.category==='银行返现'||(x.tags||[]).includes('信用卡返现'))).reduce((s,x)=>s+x.amount,0),currency)}</b></div><div class="miniCard" data-act="jumpToDetail" data-id="discount"><small>立减优惠</small><b style="color:#d94b4b">${fmt(discount,currency)}</b></div><div class="miniCard"><small>退款</small><b style="color:#d94b4b">${fmt(list.filter(x=>x.type==='refund').reduce((s,x)=>s+x.amount,0),currency)}</b></div></div>
-<div class="card settingsCard"><div class="sectionTitle" style="margin-top:0"><h2>实际支出分类</h2><span class="subtle">${ranked.length} 类</span></div>${ranked.length?ranked.map(([c,v])=>`<div class="barRow"><div class="barName"><span>${E(c)}</span><b>${fmt(v,currency)}</b></div><div class="barTrack"><div class="barFill" style="width:${Math.min(100,Math.round(v/ranked[0][1]*100))}%"></div></div></div>`).join(''):'<div class="empty">该时间段暂无支出</div>'}</div>
+<div class="summaryTriplet"><div class="miniCard" data-act="jumpToDetail" data-id="cashback"><small>银行返现</small><b style="color:#d94b4b">${fmt(list.filter(x=>x.type==='income'&&(x.category==='银行返现'||(x.tags||[]).includes('信用卡返现'))).reduce((s,x)=>{
+  const acc = account(x.from);
+  const rate = acc?.currency === 'CNY' ? 1 : (Number(state.fxRates?.[acc?.currency]) || 1);
+  return s + Math.round(x.amount * rate);
+},0),currency)}</b></div><div class="miniCard" data-act="jumpToDetail" data-id="discount"><small>立减优惠</small><b style="color:#d94b4b">${fmt(discount,currency)}</b></div><div class="miniCard"><small>退款</small><b style="color:#d94b4b">${fmt(list.filter(x=>x.type==='refund').reduce((s,x)=>s+x.amount,0),currency)}</b></div></div>
+<div class="card settingsCard"><div class="sectionTitle" style="margin-top:0"><h2>实际支出分类</h2><span class="subtle">${ranked.length} 类</span></div>${ranked.length?ranked.map(([c,v])=>`<div class="barRow" data-act="jumpToCategory" data-id="${E(c)}" style="cursor:pointer"><div class="barName"><span>${E(c)}</span><b>${fmt(v,currency)}</b></div><div class="barTrack"><div class="barFill" style="width:${Math.min(100,Math.round(v/ranked[0][1]*100))}%"></div></div></div>`).join(''):'<div class="empty">该时间段暂无支出</div>'}</div>
 <div class="card settingsCard" style="margin-top:14px"><h3>净资产（纳入统计的账户）</h3><div class="mainNumber" style="font-size:27px">${wealth.complete?fmt(netAll,'CNY'):'—'}</div><p class="smallHint">仅汇总各账户编辑页开启“纳入资产负债统计”的账户。首页隐藏但仍纳入的账户也参与计算。${missing.length?'缺少 '+E(missing.join('、'))+' 的人民币汇率，暂不显示完整合计。':''}</p></div>
 <div class="notice blueTint" style="margin-top:15px">收入中的银行返现仍按普通收入统计；立减优惠仅统计支付时直接减免的金额。退款只调整账户余额。</div>`;
 }
 
-function renderSettings(){return `<div class="sectionTitle" style="margin-top:0"><h2>数据与设置</h2><span class="subtle">本地优先 · 无订阅</span></div><div class="stack"><div class="card settingsCard"><h3>MoneyWiz 数据迁移</h3><p>导入交易 CSV：自动匹配中文或英文字段，支持修改映射、预览、重复识别和无限创建账户。不会修改 MoneyWiz 原账本。附件和账单并不保证能通过 CSV 转移。</p><div class="settingsActions"><button class="btn" data-act="selectCsv">导入 MoneyWiz CSV</button><button class="btn" data-act="csvHelp">操作说明</button></div></div><div class="card settingsCard"><h3>分类图标与独立分类树</h3><p>收入与支出分别管理分类，内置图标和颜色设置。子分类可继承父分类图标；分类统计支持切换金额与交易笔数，历史交易按分类ID关联。</p><div class="settingsActions"><button class="btn" data-act="manageCategories">分类管理 / 图标与颜色</button></div></div><div class="card settingsCard"><h3>共享信用额度池</h3><p>同一币种的多张信用卡共享授信额度，各卡独立账单日、还款日和账单金额。</p><div class="settingsActions" style="margin-bottom:12px"><button class="btn" data-act="newPool">新建额度池</button></div><div class="stack">${(state.creditPools||[]).map(p=>`<button class="poolCard" data-act="editPool" data-id="${E(p.id)}"><div><b>${E(p.name)}</b><small>${E(p.currency)} · 额度 ${fmt(p.limit,p.currency)}</small></div><span style="font-size:12px;color:#929ca9;">编辑 ›</span></button>`).join('')}</div></div><div class="card settingsCard"><h3>多币种与汇率</h3><p>跨币种转账按实际转出与到账金额记录。报表折合人民币时采用你手动录入的汇率，不联网。</p><div class="settingsActions"><button class="btn" data-act="fxForm">管理报表汇率</button></div></div><div class="card settingsCard"><h3>完整备份与恢复</h3><p>JSON 文件包含账户、共享额度、交易、优惠、标签、附件和汇率。恢复会替换本应用现有账本。</p><div class="settingsActions"><button class="btn" data-act="backupJson">备份 JSON</button><button class="btn" data-act="restoreJson">恢复 JSON</button><button class="btn" data-act="exportCsv">导出交易 CSV</button></div></div><div class="card settingsCard"><h3>账户管理、独立分组及资产负债统计</h3><p>支持独立创建/拖动账户分组、批量移动账户和「贷款」账户类型。可在“编辑账户”中独立控制是否纳入资产负债统计，与首页隐藏互不影响。共 ${state.accounts.length} 个账户、${state.transactions.length} 笔交易。账户数量不限；关闭或删除主屏幕App可能丢失本地数据。</p><div class="settingsActions"><button class="btn" data-act="newAccount">新建账户</button><button class="btn" data-act="manageGroups">管理分组</button></div>${state.accounts.filter(a=>a.hidden).map(a=>`<button class="poolCard" data-act="editAccount" data-id="${E(a.id)}"><div><b>${E(a.name)}</b><small>已隐藏 · 点击编辑以恢复显示</small></div><span>编辑 ›</span></button>`).join('')}</div><div class="notice">⚠️ <b>数据安全：</b>数据只保存在当前浏览器或主屏幕 PWA 的 IndexedDB，不自动同步、不加密。请在真实迁移前完整备份 MoneyWiz，并定期导出 JSON 到独立、安全的位置。不要将私人账本文件放到公共网页托管目录。</div><div class="pageFoot">存储：${storage==='idb'?'IndexedDB':storage==='localStorage'?'localStorage 兼容模式':'无法持久保存'} · 简账 v4.2.2</div></div>`}
+function renderSettings(){return `<div class="sectionTitle" style="margin-top:0"><h2>数据与设置</h2><span class="subtle">本地优先 · 无订阅</span></div><div class="stack"><div class="card settingsCard"><h3>MoneyWiz 数据迁移</h3><p>导入交易 CSV：自动匹配中文或英文字段，支持修改映射、预览、重复识别和无限创建账户。不会修改 MoneyWiz 原账本。附件和账单并不保证能通过 CSV 转移。</p><div class="settingsActions"><button class="btn" data-act="selectCsv">导入 MoneyWiz CSV</button><button class="btn" data-act="csvHelp">操作说明</button></div></div><div class="card settingsCard"><h3>分类图标与独立分类树</h3><p>收入与支出分别管理分类，内置图标和颜色设置。子分类可继承父分类图标；分类统计支持切换金额与交易笔数，历史交易按分类ID关联。</p><div class="settingsActions"><button class="btn" data-act="manageCategories">分类管理 / 图标与颜色</button></div></div><div class="card settingsCard"><h3>共享信用额度池</h3><p>同一币种的多张信用卡共享授信额度，各卡独立账单日、还款日和账单金额。</p><div class="settingsActions" style="margin-bottom:12px"><button class="btn" data-act="newPool">新建额度池</button></div><div class="stack">${(state.creditPools||[]).map(p=>`<button class="poolCard" data-act="editPool" data-id="${E(p.id)}"><div><b>${E(p.name)}</b><small>${E(p.currency)} · 额度 ${fmt(p.limit,p.currency)}</small></div><span style="font-size:12px;color:#929ca9;">编辑 ›</span></button>`).join('')}</div></div><div class="card settingsCard"><h3>多币种与汇率</h3><p>跨币种转账按实际转出与到账金额记录。报表折合人民币时采用你手动录入的汇率，不联网。</p><div class="settingsActions"><button class="btn" data-act="fxForm">管理报表汇率</button></div></div><div class="card settingsCard"><h3>完整备份与恢复</h3><p>JSON 文件包含账户、共享额度、交易、优惠、标签、附件和汇率。恢复会替换本应用现有账本。</p><div class="settingsActions"><button class="btn" data-act="backupJson">备份 JSON</button><button class="btn" data-act="restoreJson">恢复 JSON</button><button class="btn" data-act="exportCsv">导出交易 CSV</button></div></div><div class="card settingsCard"><h3>账户管理、独立分组及资产负债统计</h3><p>支持独立创建/拖动账户分组、批量移动账户和「贷款」账户类型。可在“编辑账户”中独立控制是否纳入资产负债统计，与首页隐藏互不影响。共 ${state.accounts.length}个账户、${state.transactions.length}笔交易。账户数量不限；关闭或删除主屏幕App可能丢失本地数据。</p><div class="settingsActions"><button class="btn" data-act="newAccount">新建账户</button><button class="btn" data-act="manageGroups">管理分组</button></div>${state.accounts.filter(a=>a.hidden).map(a=>`<button class="poolCard" data-act="editAccount" data-id="${E(a.id)}"><div><b>${E(a.name)}</b><small>已隐藏 · 点击编辑以恢复显示</small></div><span>编辑 ›</span></button>`).join('')}</div><div class="notice">⚠️ <b>数据安全：</b>数据只保存在当前浏览器或主屏幕 PWA 的 IndexedDB，不自动同步、不加密。请在真实迁移前完整备份 MoneyWiz，并定期导出 JSON 到独立、安全的位置。不要将私人账本文件放到公共网页托管目录。</div><div class="pageFoot">存储：${storage==='idb'?'IndexedDB':storage==='localStorage'?'localStorage 兼容模式':'无法持久保存'} · 简账 v4.2.2</div></div>`}
 
 function render(){document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x.dataset.page===page));$('content').innerHTML=page==='accounts'?(accountDetail?renderAccountDetail():renderAccounts()):page==='ledger'?renderLedger():page==='reports'?renderReports():renderSettings();}
 function modal(title,body,foot){$('modalTitle').textContent=title;$('modalBody').innerHTML=body;$('modalFoot').innerHTML=foot||'<button class="btn soft" data-act="closeModal">关闭</button>';$('modal').hidden=false;document.body.style.overflow='hidden'}
@@ -1208,8 +1335,8 @@ function categoryUsage(){const m=new Map();
 function showCategoryPicker(target=null){categoryTarget=target;categoryManager=!target;const title=categoryManager?'管理分类':'选择分类';$('catHeading').textContent=title;const prev=target?.value||'';$('catSearch').value='';$('catOverlay').hidden=false;renderCategoryPicker();}
 function closeCategoryPicker(){$('catOverlay').hidden=true;categoryTarget=null;categoryManager=false;}
 function renderCategoryPicker(){const q=$('catSearch').value.trim().toLocaleLowerCase();const type=txType==='income'?'income':'expense';const items=categoryUsage().filter(x=>!q||x.name.toLocaleLowerCase().includes(q));items.sort((a,b)=>{const ta=a[type],tb=b[type];return tb-ta||b.total-a.total||a.name.localeCompare(b.name,'zh-Hans-CN')});const shown=items.slice(0,500);window.__catItems=shown;
- $('catResults').innerHTML=shown.length?shown.map((x,i)=>`<button type="button" class="catResult" data-act="selectCategory" data-id="${i}"><b>${E(x.name)}</b><small>${x.total?`历史 ${x.total} 笔`:x.custom?'自定义':'常用'}　›</small></button>`).join(''):'<div class="empty">没有找到分类，可在下方创建</div>';
- const exists=categoryUsage().some(x=>x.name=== $('catSearch').value.trim());$('catAdd').disabled=!$('catSearch').value.trim()||exists;$('catCount').textContent=`匹配 ${items.length} 个分类${items.length>500?'，仅展示前500项':''}。选择分类不会自动修改旧交易。`;
+ $('catResults').innerHTML=shown.length?shown.map((x,i)=>`<button type="button" class="catResult" data-act="selectCategory" data-id="${i}"><b>${E(x.name)}</b><small>${x.total?`历史 ${x.total}笔`:x.custom?'自定义':'常用'}　›</small></button>`).join(''):'<div class="empty">没有找到分类，可在下方创建</div>';
+ const exists=categoryUsage().some(x=>x.name=== $('catSearch').value.trim());$('catAdd').disabled=!$('catSearch').value.trim()||exists;$('catCount').textContent=`匹配 ${items.length}个分类${items.length>500?'，仅展示前500项':''}。选择分类不会自动修改旧交易。`;
 }
 function applyCategory(name){
   if(categoryTarget && categoryTarget.id === 'batchCategoryTarget'){
@@ -1264,7 +1391,7 @@ function viewTx(id){
 function accountActions(id){
  const a=account(id);if(!a)return t('账户不存在');
  const related=state.transactions.filter(x=>x.from===id||x.to===id),transfers=related.filter(x=>x.type==='transfer');
- modal('账户操作',`<div class="operationHeader"><b>${E(a.name)}</b><strong>${fmt(balance(id),a.currency)}</strong></div><div class="operationSection"><div class="kvline"><span>账户类型</span><b>${E(a.kind==='credit'?'信用卡':a.kind==='loan'?'贷款':'普通账户')}</b></div><div class="kvline"><span>关联交易</span><b>${related.length} 笔</b></div></div><div class="operationGrid accountActionGrid">
+ modal('账户操作',`<div class="operationHeader"><b>${E(a.name)}</b><strong>${fmt(balance(id),a.currency)}</strong></div><div class="operationSection"><div class="kvline"><span>账户类型</span><b>${E(a.kind==='credit'?'信用卡':a.kind==='loan'?'贷款':'普通账户')}</b></div><div class="kvline"><span>关联交易</span><b>${related.length}笔</b></div></div><div class="operationGrid accountActionGrid">
 <button class="btn soft" data-act="editAccount" data-id="${E(id)}">修改账户</button>
 <button class="btn soft" data-act="deleteAccountForm" data-id="${E(id)}">删除账户</button>
 </div><p class="smallHint">删除含历史交易的账户会连带影响相关转账，请谨慎操作。</p>`,`<button class="btn" data-act="closeModal">关闭</button>`);
@@ -1273,7 +1400,7 @@ function accountActions(id){
  const affected=state.transactions.filter(x=>x.from===id||x.to===id);
  const cross=affected.filter(x=>x.type==='transfer'&&x.from!==x.to);
  editing=id;editKind='accountDelete';
- modal('删除账户',`<div class="dangerZone"><b>此操作不可撤销，请先备份完整账本。</b><ul><li>将永久删除账户「${E(a.name)}」。</li><li>将同时删除与此账户关联的 ${affected.length} 笔交易（包括 ${cross.length} 笔双边转账）。</li>${cross.length?'<li>删除双边转账可能改变其他关联账户的余额。</li>':''}<li>不会删除共享额度池，也不会修改其它账户的期初余额。</li></ul></div><button class="btn" style="margin-top:14px;width:100%" data-act="backupJson">先导出完整 JSON 备份</button><label class="inputLabel">请输入账户名称以确认删除</label><input class="field" id="deleteAccountName" autocomplete="off" placeholder="${E(a.name)}"><label class="inlineCheck"><input type="checkbox" id="deleteAccountAck"> 我已保存备份，并理解账户及其关联交易将被永久删除</label>`,`<button class="btn soft" data-act="closeModal">取消</button><button class="btn warn" data-act="confirmDeleteAccount" data-id="${E(id)}">永久删除</button>`);
+ modal('删除账户',`<div class="dangerZone"><b>此操作不可撤销，请先备份完整账本。</b><ul><li>将永久删除账户「${E(a.name)}」。</li><li>将同时删除与此账户关联的 ${affected.length}笔交易（包括 ${cross.length}笔双边转账）。</li>${cross.length?'<li>删除双边转账可能改变其他关联账户的余额。</li>':''}<li>不会删除共享额度池，也不会修改其它账户的期初余额。</li></ul></div><button class="btn" style="margin-top:14px;width:100%" data-act="backupJson">先导出完整 JSON 备份</button><label class="inputLabel">请输入账户名称以确认删除</label><input class="field" id="deleteAccountName" autocomplete="off" placeholder="${E(a.name)}"><label class="inlineCheck"><input type="checkbox" id="deleteAccountAck"> 我已保存备份，并理解账户及其关联交易将被永久删除</label>`,`<button class="btn soft" data-act="closeModal">取消</button><button class="btn warn" data-act="confirmDeleteAccount" data-id="${E(id)}">永久删除</button>`);
 }
 window.showTagSuggestions = function(field){
   const val = field.value;
@@ -1293,7 +1420,7 @@ window.showTagSuggestions = function(field){
     box.classList.add('hide');
   }
 }
-function txForm(id='',pref='',template=null){const loanCandidate=state.transactions.find(t=>t.id===id)||template;if(loanCandidate?.type==='loan_repayment'){v41LoanForm(id,pref,template);return}const existing=state.transactions.find(t=>t.id===id);const x=existing||template;editing=id;editKind='tx';txType=x?x.type:'expense';let accountId=x?.from||pref||accountDetail||state.accounts[0]?.id||'';let acc=account(accountId);const options=(choose='')=>state.accounts.map(a=>`<option value="${E(a.id)}" ${choose===a.id?'selected':''}>${E(a.name)}（${E(a.currency)}）</option>`).join('');const isTransfer=txType==='transfer';let tags=(x?.tags||[]).join(', ');let files=(x?.attachments||[]).map((f,i)=>`<div class="attachmentChip" data-index="${i}"><details style="flex:1;min-width:0"><summary>📎 ${E(f.name)} · 查看</summary><img src="${E(f.data)}" alt="${E(f.name)}" style="width:100%;max-height:320px;object-fit:contain;margin-top:9px;border-radius:8px"></details><button type="button" class="btn tiny warn" data-act="removeAttachment" data-id="${i}">移除</button></div>`).join('');
+function txForm(id='',pref='',template=null){const loanCandidate=state.transactions.find(t=>t.id===id)||template;if(loanCandidate?.type==='loan_repayment'){v41LoanForm(id,pref,template);return}const existing=state.transactions.find(t=>t.id===id);const x=existing||template;editing=id;editKind='tx';txType=x?x.type:'expense';let accountId=x?.from||pref||accountDetail||state.accounts[0]?.id||'';let acc=account(accountId);const options=(choose='')=>sortedAccounts(state.accounts).map(a=>`<option value="${E(a.id)}" ${choose===a.id?'selected':''}>${E(a.name)}（${E(a.currency)}）</option>`).join('');const isTransfer=txType==='transfer';let tags=(x?.tags||[]).join(', ');let files=(x?.attachments||[]).map((f,i)=>`<div class="attachmentChip" data-index="${i}"><details style="flex:1;min-width:0"><summary>📎 ${E(f.name)} · 查看</summary><img src="${E(f.data)}" alt="${E(f.name)}" style="width:100%;max-height:320px;object-fit:contain;margin-top:9px;border-radius:8px"></details><button type="button" class="btn tiny warn" data-act="removeAttachment" data-id="${i}">移除</button></div>`).join('');
 modal(existing?'编辑交易':template?'复制 / 退款交易':'新增交易',`<form id="txForm"><div class="choiceTabs" id="txTabs">${['transfer_in','transfer_out'].includes(txType)?`<button type="button" class="active" data-txtype="${txType}">${txType==='transfer_in'?'导入转入':'导入转出'}</button>`:`<button type="button" class="${txType==='expense'?'active':''}" data-txtype="expense">支出</button><button type="button" class="${txType==='income'?'active':''}" data-txtype="income">收入</button><button type="button" class="${txType==='transfer'?'active':''}" data-txtype="transfer">转账</button><button type="button" class="${txType==='loan_repayment'?'active':''}" data-act="v41LoanForm">贷款还款</button><button type="button" class="${txType==='refund'?'active':''}" data-txtype="refund">退款</button>`}</div><label class="inputLabel" id="txFromTitle">账户</label><div id="txFromNative"><select class="field" name="account" id="txFrom">${options(accountId)}</select></div><div id="txFromSearch" class="hide"><button type="button" class="txAccountBtn" data-act="openTxAccountPicker" data-id="from" aria-label="搜索选择转出账户"><span class="txAccountAvatar" id="txFromAvatar"></span><span class="txAccountNames"><b id="txFromLabel"></b><small id="txFromMeta"></small></span><span class="txAccountCaret"></span></button></div><div id="txSwapWrap" class="${isTransfer?'':'hide'}" style="width:100%;display:flex;justify-content:center;align-items:center;margin:26px 0 8px;"><button type="button" class="txSwapBtn" data-act="swapTxAccounts" title="交换转出账户和转入账户" style="display:inline-block;">交换转出、转入账户</button></div><div id="txToWrap" class="${isTransfer?'':'hide'}"><label class="inputLabel" style="margin-top:0">转入账户</label><select class="field txToNativeHidden" name="to" id="txTo">${options(x?.to||state.accounts.find(a=>a.id!==accountId)?.id||'')}</select><div id="txToSearch"><button type="button" class="txAccountBtn" data-act="openTxAccountPicker" data-id="to" aria-label="搜索选择转入账户"><span class="txAccountAvatar" id="txToAvatar"></span><span class="txAccountNames"><b id="txToLabel"></b><small id="txToMeta"></small></span><span class="txAccountCaret"></span></button></div><p class="txTransferHint">点击账户名称即可搜索；不同币种交换时会同步交换转出和到账金额。</p></div><div id="txAccountPicker" class="txAccountPicker hide"><div class="txAccountPickerTitle"><span id="txAccountPickerTitle">搜索账户</span><button type="button" class="btn tiny" data-act="closeTxAccountPicker">收起</button></div><input class="field txAccountPickerInput" type="search" id="txAccountSearchInput" placeholder="搜索账户名称、分组或币种" autocomplete="off" aria-label="搜索账户"><div id="txAccountPickerResults" class="txAccountPickerResults"></div></div><label class="inputLabel">实际金额（<span id="txCurrency">${E(acc?.currency||'CNY')}</span>）</label><input class="field" id="txAmount" type="number" min="0.01" max="999999999999" step="0.01" required inputmode="decimal" name="amount" value="${x?(x.amount/100).toFixed(2):''}" placeholder="0.00"><div id="discountWrap" class="${txType==='expense'?'':'hide'}"><label class="inputLabel">支付时立减优惠（选填）</label><input class="field" id="txDiscount" name="discount" type="number" min="0" step="0.01" inputmode="decimal" value="${x?.discount?(x.discount/100).toFixed(2):''}" placeholder="例如 2.00，不影响实际扣款"><div class="discountPreview" id="discountPreview">原价、优惠和实付将自动计算</div></div><div id="targetAmountWrap" class="${isTransfer?'':'hide'}"><label class="inputLabel">转入金额（实际到账金额）</label><input class="field" id="txToAmount" type="number" step="0.01" min="0.01" name="toAmount" data-manual="false" value="${x?.toAmount?(x.toAmount/100).toFixed(2):''}" placeholder="默认与转出金额相同"><p class="smallHint">同币种允许转出与到账金额不同；跨币种以实际到账额记账，差额不自动视为优惠。</p><div class="v41TransferDifference hide" id="v41TransferDifference"><div id="v41TransferDiffHint" class="smallHint"></div><label class="inputLabel">差额性质（同币种适用）</label><select name="transferDeltaKind" id="v41TransferDeltaKind" class="field"><option value="discount" ${x?.transferDeltaKind==='discount'?'selected':''}>转账优惠 / 减免</option><option value="fee" ${x?.transferDeltaKind==='fee'?'selected':''}>手续费 / 损耗</option><option value="other" ${x?.transferDeltaKind==='other'?'selected':''}>其他差额</option></select></div></div><div class="flexFields"><div><label class="inputLabel">交易日期</label><input class="field" type="date" name="date" required value="${E(x?.date||now())}"></div><div><label class="inputLabel">时间（选填）</label><input class="field" type="time" name="time" value="${E(existing ? (x?.time||'') : (x?.time||nowTime()))}"></div></div><label class="inputLabel">描述</label><input class="field" name="description" id="txDesc" autocomplete="off" maxlength="240" placeholder="输入后联想历史交易" value="${E(x?.description||'')}"><label class="inputLabel">交易对方（选填）</label><input class="field" name="payee" id="txPayee" autocomplete="off" maxlength="240" placeholder="也可输入交易对方进行联想" value="${E(x?.payee||'')}"><div class="suggestBox hide" id="suggestBox"></div><div id="categoryWrap" class="${isTransfer?'hide':''}"><label class="inputLabel">分类</label><div class="catField"><input class="field" name="category" id="txCategory" maxlength="120" value="${E(x?.category||'')}" placeholder="点击右侧选择已有分类"><button type="button" class="btn soft catPickBtn" data-act="openCategoryPicker">选择分类 ▾</button></div><p class="smallHint">可选用 MoneyWiz 导入的历史分类，也可直接输入新名称。</p></div><div id="splitWrap" class="${txType==='expense'?'':'hide'}"><label class="inlineCheck"><input type="checkbox" id="splitToggle" ${x?.splits?.length?'checked':''}> 按多个分类拆分这笔支出（拆分合计等于实付）</label><div id="splitRows" class="${x?.splits?.length?'':'hide'}">${(x?.splits?.length?x.splits:[{category:'',amount:0},{category:'',amount:0}]).map((s,i)=>`<div class="splitLine"><input class="field splitCategory" placeholder="分类" value="${E(s.category)}" readonly><button type="button" class="btn soft" data-act="openSplitCategoryPicker">选择</button><input class="field splitAmount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="金额" value="${s.amount?(s.amount/100).toFixed(2):''}"><button type="button" class="btn tiny" data-act="removeSplit" data-id="${i}">×</button></div>`).join('')}<button type="button" class="btn tiny soft" data-act="addSplit">+ 添加分类</button></div></div><label class="inputLabel">标签（用逗号分隔）</label>
 <div style="position:relative">
   <input class="field" name="tags" id="txTags" autocomplete="off" value="${E(tags)}" placeholder="例如：出差,可报销" oninput="window.showTagSuggestions(this)" onblur="setTimeout(()=>{const b=document.getElementById('tagSuggestBox');if(b)b.classList.add('hide')},200)">
@@ -1328,7 +1455,7 @@ function checkRewardHistory(){
   for(const rule of (state.rewardRules||[])){
     if(rule.archived) continue;
     if(rule.cycle==='monthly'){
-      // 强制回溯 6 个月
+      // 强制回溯 6个月
       for(let i=1; i<=6; i++){
         const base = new Date(todayDate.getFullYear(), todayDate.getMonth() - i + 1, 15); 
         const period = getPeriodRange(rule, base);
@@ -1462,7 +1589,7 @@ function viewPoolCards(poolId){
   if(accounts.length===0){t('该额度池暂无关联信用卡');return}
   if(accounts.length===1){accountDetail=accounts[0].id;page='accounts';render();window.scrollTo(0,0);return}
   
-  modal(p.name+' · 选择信用卡',`<div class="notice blueTint">该额度池下有多张信用卡，请选择要查看的账户：</div><div class="v41GroupList">${accounts.map(a=>`<button class="poolCard" data-act="viewPoolCardItem" data-id="${E(a.id)}"><div><b>${E(a.name)}</b><small>已用 ${fmt(creditUsed(a),a.currency)} / 可用 ${fmt(creditAvailable(a),a.currency)}</small></div><span>查看 ›</span></button>`).join('')}</div>`,`<button class="btn" data-act="closeModal">取消</button><button class="btn soft" data-act="editPool" data-id="${E(poolId)}">编辑额度池</button>`);
+  modal(p.name+' · 选择信用卡',`<div class="notice blueTint">该额度池下有多张信用卡，请选择要查看的账户：</div><div class="v41GroupList" style="margin-top:12px;">${accounts.map(a=>`<button class="poolCard" data-act="viewPoolCardItem" data-id="${E(a.id)}"><div><b>${E(a.name)}</b><small>已用 ${fmt(creditUsed(a),a.currency)} / 可用 ${fmt(creditAvailable(a),a.currency)}</small></div><span style="font-size:12px;color:#929ca9;">查看 ›</span></button>`).join('')}</div>`,`<button class="btn" data-act="closeModal">取消</button><button class="btn soft" data-act="editPool" data-id="${E(poolId)}">编辑额度池</button>`);
 }
 function reconcile(id){let a=account(id);if(!a)return;editing=id;editKind='reconcile';modal('校准账户余额',`<div class="notice blueTint">MoneyWiz 导出 CSV 后，若期初余额或转账缺少对应记录，可以核对当前余额。校准只调整本账户的余额基准，<b>不会记入收入或支出</b>。</div><p class="inputLabel">${E(a.name)} · 当前计算余额</p><div style="font-size:27px;font-weight:730">${fmt(balance(a.id),a.currency)}</div><label class="inputLabel">MoneyWiz 中该账户当前余额</label><input id="reconcileTarget" class="field" type="number" step="0.01" inputmode="decimal" value="${(balance(a.id)/100).toFixed(2)}"><p class="smallHint">建议先比较导入记录笔数、日期和转账，再用此功能校准。</p>`,`<button class="btn soft" data-act="closeModal">取消</button><button class="btn soft" data-act="applyReconcile">确认校准</button>`)}
 function download(blob,name){let url=URL.createObjectURL(blob);let a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000)}
@@ -1539,9 +1666,9 @@ function showCsvMap(){let c=csvContext;if(!c)return;
  const previews=(isReport?c.report.txRows:c.rows).slice(0,5).map(r=>`<tr>${c.header.map((h,i)=>`<td title="${E(r[i]||'')}">${E(r[i]||'')}</td>`).join('')}</tr>`).join('');
  const pristine=state.accounts.length===0&&state.transactions.length===0;
  const longHistory=isReport&&c.report.earliest&&c.report.latest&&c.report.earliest!==c.report.latest;
- let reportHtml=isReport?`<div class="notice blueTint"><b>已识别 MoneyWiz 原生混合报表</b><br>账户摘要：${c.report.accountRows.length} 条；交易流水：${c.report.txRows.length} 笔；其他：${c.report.other} 行。<br>交易日期范围：${E(c.report.earliest||'无')} ${c.report.latest&&c.report.latest!==c.report.earliest?'至 '+E(c.report.latest):''}。<br>账户摘要会用于建立缺失账户，不会错误当成交易。注意：摘要的“当前余额”不是期初余额。</div><label class="inlineCheck" style="margin-top:13px"><input type="checkbox" id="useMWBalance" ${pristine&&longHistory?'checked':''}> <b>以报表“当前余额”校准新导入账户的起始余额</b></label><p class="smallHint">仅适用于空白账本、且该报表为最终要导入的完整交易范围。系统会扣除本次导入交易对余额的影响，避免余额重复。<b>当前文件只有部分日期时，不建议勾选后再追加历史交易。</b>已有账户的余额不会被覆盖。不同币种的账户请在导入后核对币种，账户类型默认普通账户（信用卡需手动设置）。</p>`:'';
- const previewCnt=isReport?`${c.report.accountRows.length} 条账户摘要、${c.report.txRows.length} 笔交易`:`${c.rows.length} 行数据`;
- modal('导入 MoneyWiz CSV',`<div class="notice blueTint"><b>${E(c.file.name)}</b><br>识别到 ${previewCnt}、${c.header.length} 个字段。先确认以下映射；原 MoneyWiz 文件不会被修改。</div>${reportHtml}<div class="mapping">${MAP.map(([k,label])=>`<div><label class="inputLabel">${label}</label><select class="field csvMap" data-map="${k}">${choices(k)}</select></div>`).join('')}</div><div class="flexFields"><div><label class="inputLabel">日期顺序（如 03/04/2026）</label><select class="field" id="dateOrder"><option value="MDY">月/日/年（美式）</option><option value="DMY">日/月/年（欧式）</option></select></div><div><label class="inputLabel">文件编码</label><select class="field" id="csvEncoding"><option value="utf-8" ${c.encoding==='utf-8'?'selected':''}>UTF-8</option><option value="gb18030" ${c.encoding==='gb18030'?'selected':''}>GB18030（中文乱码时）</option></select></div></div><label class="inputLabel">文件没有账户名称字段时，使用这个账户名</label><input id="defaultCsvAccount" class="field" maxlength="160" value="${E(c.file.name.replace(/\.(csv|tsv|txt)$/i,'').replace(/[._-]+/g,' ').slice(0,100))}" placeholder="例如：中国银行储蓄卡"><p class="smallHint">同名同币种账户会合并；不同币种独立。导入会跳过检测到的重复流水。</p><div class="sectionTitle"><h2>${isReport?'交易样例':'原文件预览'}（前5行）</h2><span class="subtle">${c.delimiter==='\t'?'Tab':c.delimiter===';'?'分号':'逗号'}分隔</span></div><div class="previewWrap"><table class="previewTable"><thead><tr>${c.header.map(h=>`<th>${E(h)}</th>`).join('')}</tr></thead><tbody>${previews}</tbody></table></div><div class="notice" style="margin-top:14px">⚠️ <b>转账提示：</b>MoneyWiz 的单账户转出和转入会作为两条单边流水导入，不另生成第二条，以免重复记账；保留导出的转账对方账户名称。</div>`,`<button class="btn soft" data-act="closeModal">取消</button><button class="btn soft" data-act="doImportCsv">确认并导入</button>`)
+ let reportHtml=isReport?`<div class="notice blueTint"><b>已识别 MoneyWiz 原生混合报表</b><br>账户摘要：${c.report.accountRows.length} 条；交易流水：${c.report.txRows.length}笔；其他：${c.report.other} 行。<br>交易日期范围：${E(c.report.earliest||'无')} ${c.report.latest&&c.report.latest!==c.report.earliest?'至 '+E(c.report.latest):''}。<br>账户摘要会用于建立缺失账户，不会错误当成交易。注意：摘要的“当前余额”不是期初余额。</div><label class="inlineCheck" style="margin-top:13px"><input type="checkbox" id="useMWBalance" ${pristine&&longHistory?'checked':''}> <b>以报表“当前余额”校准新导入账户的起始余额</b></label><p class="smallHint">仅适用于空白账本、且该报表为最终要导入的完整交易范围。系统会扣除本次导入交易对余额的影响，避免余额重复。<b>当前文件只有部分日期时，不建议勾选后再追加历史交易。</b>已有账户的余额不会被覆盖。不同币种的账户请在导入后核对币种，账户类型默认普通账户（信用卡需手动设置）。</p>`:'';
+ const previewCnt=isReport?`${c.report.accountRows.length} 条账户摘要、${c.report.txRows.length}笔交易`:`${c.rows.length} 行数据`;
+ modal('导入 MoneyWiz CSV',`<div class="notice blueTint"><b>${E(c.file.name)}</b><br>识别到 ${previewCnt}、${c.header.length}个字段。先确认以下映射；原 MoneyWiz 文件不会被修改。</div>${reportHtml}<div class="mapping">${MAP.map(([k,label])=>`<div><label class="inputLabel">${label}</label><select class="field csvMap" data-map="${k}">${choices(k)}</select></div>`).join('')}</div><div class="flexFields"><div><label class="inputLabel">日期顺序（如 03/04/2026）</label><select class="field" id="dateOrder"><option value="MDY">月/日/年（美式）</option><option value="DMY">日/月/年（欧式）</option></select></div><div><label class="inputLabel">文件编码</label><select class="field" id="csvEncoding"><option value="utf-8" ${c.encoding==='utf-8'?'selected':''}>UTF-8</option><option value="gb18030" ${c.encoding==='gb18030'?'selected':''}>GB18030（中文乱码时）</option></select></div></div><label class="inputLabel">文件没有账户名称字段时，使用这个账户名</label><input id="defaultCsvAccount" class="field" maxlength="160" value="${E(c.file.name.replace(/\.(csv|tsv|txt)$/i,'').replace(/[._-]+/g,' ').slice(0,100))}" placeholder="例如：中国银行储蓄卡"><p class="smallHint">同名同币种账户会合并；不同币种独立。导入会跳过检测到的重复流水。</p><div class="sectionTitle"><h2>${isReport?'交易样例':'原文件预览'}（前5行）</h2><span class="subtle">${c.delimiter==='\t'?'Tab':c.delimiter===';'?'分号':'逗号'}分隔</span></div><div class="previewWrap"><table class="previewTable"><thead><tr>${c.header.map(h=>`<th>${E(h)}</th>`).join('')}</tr></thead><tbody>${previews}</tbody></table></div><div class="notice" style="margin-top:14px">⚠️ <b>转账提示：</b>MoneyWiz 的单账户转出和转入会作为两条单边流水导入，不另生成第二条，以免重复记账；保留导出的转账对方账户名称。</div>`,`<button class="btn soft" data-act="closeModal">取消</button><button class="btn soft" data-act="doImportCsv">确认并导入</button>`)
 }
 function csvNumber(v){let s=String(v??'').trim();if(!s)return NaN;let neg=/^\(.*\)$/.test(s)||/^-/.test(s)||/-$/.test(s);s=s.replace(/[\s\u00a0¥￥$€£₹（）()A-Za-z]/g,'').replace(/[^\d.,-]/g,'').replaceAll('-','');if(s.includes(',')&&s.includes('.')){s=s.lastIndexOf(',')>s.lastIndexOf('.')?s.replaceAll('.','').replace(',','.'):s.replaceAll(',','')}else if(s.includes(',')){let arr=s.split(',');if(arr.at(-1).length<=2)s=arr.slice(0,-1).join('')+'.'+arr.at(-1);else s=arr.join('')}const n=Number(s);return Number.isFinite(n)?n*(neg?-1:1):NaN}
 function dateVal(v,mode='MDY'){let s=String(v??'').trim();if(!s)return null;s=s.replace(/[年月]/g,'/').replace(/[日号]/g,'').replace(/\s*T\s*/,' ').replace(/\./g,'/').replace(/-/g,'/');let m=s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?/);let yy,mm,dd;if(m){yy=+m[1];mm=+m[2];dd=+m[3]}else{m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);if(!m)return null;yy=+m[3];mm=+(mode==='MDY'?m[1]:m[2]);dd=+(mode==='MDY'?m[2]:m[1])}let d=new Date(yy,mm-1,dd);if(d.getFullYear()!==yy||d.getMonth()+1!==mm||d.getDate()!==dd)return null;return {date:`${yy}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`,time:m[4]?`${m[4].padStart(2,'0')}:${m[5]}`:''}}
@@ -1583,13 +1710,51 @@ function importCSV(){let c=csvContext;if(!c)return;
  if(align){for(let a of accAdds){let key=a.name.trim().toLowerCase()+'|'+a.currency;if(summaryBalances.has(key))a.opening=summaryBalances.get(key)-incoming.reduce((total,x)=>total+delta(x,a.id),0)}}
  if(!incoming.length&&!accAdds.length){alert('未识别到可导入的新交易或账户。'+(fail.length?'\n'+fail.slice(0,6).join('\n'):'\n可能全部为重复记录'));return}
  let dup=txRows.length-incoming.length-fail.length;
- let msg=`即将导入：\n新增账户 ${accAdds.length} 个\n新增交易 ${incoming.length} 笔\n重复交易 ${dup} 笔\n异常交易 ${fail.length} 笔${c.report?'\n账户摘要 '+c.report.accountRows.length+' 条'+(badSummary?'，其中异常 '+badSummary+' 条':''):''}\n余额快照校准：${align?'仅校准新账户':'不启用'}\n\n建议先备份账本，确认继续？`;
+ let msg=`即将导入：\n新增账户 ${accAdds.length}个\n新增交易 ${incoming.length}笔\n重复交易 ${dup}笔\n异常交易 ${fail.length}笔${c.report?'\n账户摘要 '+c.report.accountRows.length+' 条'+(badSummary?'，其中异常 '+badSummary+' 条':''):''}\n余额快照校准：${align?'仅校准新账户':'不启用'}\n\n建议先备份账本，确认继续？`;
  if(!confirm(msg))return;
  let old=state;state={...state,accounts:[...state.accounts,...accAdds],transactions:[...state.transactions,...incoming]};
  save().then(()=>{closeModal();render();alert(`导入完成：新增${accAdds.length}个账户、${incoming.length}笔交易；跳过重复${dup}笔、异常${fail.length}笔。${align?'\n账户当前余额已按这份报表的快照校准。':''}${fail.length?'\n前几项异常：\n'+fail.slice(0,8).join('\n'):''}\n请检查信用卡类型、不同币种和账户余额。`)}).catch(()=>{state=old;render()});
 }
 async function restore(file){try{if(file.size>120e6)throw Error('备份文件超过120MB，请先分批减少附件');const text=await file.text(),obj=validate(JSON.parse(text));if(!confirm(`即将用备份覆盖当前所有账本。\n包含${obj.accounts.length}个账户、${obj.transactions.length}笔交易。\n\n确定已备份当前数据并继续？`))return;let old=state;state=obj;try{await save();accountDetail='';page='accounts';render();t('完整备份已恢复')}catch(e){state=old;render()}}catch(e){alert('恢复失败：'+e.message)}}
 async function act(name,id,element){try{
+if(name==='clearSubFilter'){
+  if(filter.jumpType){
+    filter.accounts = [];
+    filter.q = '';
+  }
+  render();
+  return;
+}
+if(name==='jumpToCategory'){
+  filter = blankFilter();
+  filter.dateOp = 'range';
+  filter.dateStart = reportDateStart;
+  filter.dateEnd = reportDateEnd;
+  filter.categories = [id];
+  filter.jumpLabel = '分类：' + id;
+  page = 'ledger';
+  render(); window.scrollTo(0,0); return;
+}
+if(name==='drilldownFilter'){
+  const type = element.dataset.type;
+  if(type === 'account'){
+    // 如果已经选中了，再点一次就取消
+    if(filter.accounts.includes(id) && filter.accounts.length === 1){
+      filter.accounts = [];
+    } else {
+      filter.accounts = [id];
+    }
+  } else if (type === 'payee'){
+    // 搜素框的值如果和当前点击的 payee 一样，就清空
+    if(filter.q === id){
+      filter.q = '';
+    } else {
+      filter.q = id;
+    }
+  }
+  render(); // 重新渲染页面，下方的流水会立刻应用过滤
+  return;
+}
 if(name==='ackAnnualFee'){
   const todayStr = now();
   let ackList = JSON.parse(localStorage.getItem('jz_fee_ack_list') || '[]');
@@ -1898,8 +2063,8 @@ if(name==='batchUpdateCategory'){
   render();return;
 }
   if(name==='manageGroups'){manageGroups();return}
-  if(name==='renameGroup'){const oldName=id;const next=prompt('将该分组重命名为：',oldName);if(next===null)return;const nextName=next.trim();if(!nextName)throw Error('分组名称不能为空');if(nextName.length>80)throw Error('分组名称最多80字');if(nextName!==oldName){const count=state.accounts.filter(a=>a.group===oldName).length;for(const a of state.accounts)if(a.group===oldName)a.group=nextName;for(const c of Object.keys(state.groupOrder||{})){state.groupOrder[c]=[...new Set((state.groupOrder[c]||[]).map(g=>g===oldName?nextName:g))]}await save();render();t('已更新 '+count+' 个账户的分组')}manageGroups();return}
-  if(name==='ungroupGroup'){const count=state.accounts.filter(a=>a.group===id).length;if(!confirm(`将「${id}」中的 ${count} 个账户移至“未分组”？不会删除账户或交易。`))return;for(const a of state.accounts)if(a.group===id)a.group='';await save();render();manageGroups();t('已取消分组');return}
+  if(name==='renameGroup'){const oldName=id;const next=prompt('将该分组重命名为：',oldName);if(next===null)return;const nextName=next.trim();if(!nextName)throw Error('分组名称不能为空');if(nextName.length>80)throw Error('分组名称最多80字');if(nextName!==oldName){const count=state.accounts.filter(a=>a.group===oldName).length;for(const a of state.accounts)if(a.group===oldName)a.group=nextName;for(const c of Object.keys(state.groupOrder||{})){state.groupOrder[c]=[...new Set((state.groupOrder[c]||[]).map(g=>g===oldName?nextName:g))]}await save();render();t('已更新 '+count+'个账户的分组')}manageGroups();return}
+  if(name==='ungroupGroup'){const count=state.accounts.filter(a=>a.group===id).length;if(!confirm(`将「${id}」中的 ${count}个账户移至“未分组”？不会删除账户或交易。`))return;for(const a of state.accounts)if(a.group===id)a.group='';await save();render();manageGroups();t('已取消分组');return}
   if(name==='newAccount'){newAccount();return}if(name==='editAccount'){newAccount(id);return}if(name==='newPool'){poolForm();return}if(name==='editPool'){poolForm(id);return}if(name==='fxForm'){fxForm();return} 
 if(name==='backAccounts'){
   accountDetail='';
@@ -1935,7 +2100,16 @@ if(name==='openAccount'){
   let tags=[...new Set(String(form.get('tags')||'').split(/[,，;；]/).map(v=>v.trim()).filter(Boolean))].slice(0,20);let old=editing&&state.transactions.find(x=>x.id===editing);let remaining=[];if(old?.attachments?.length){let removed=new Set([...document.querySelectorAll('#existingAttachments .attachmentChip')].map(n=>Number(n.dataset.index)));remaining=old.attachments.filter((z,i)=>removed.has(i))}let files=Array.from($('txAttachments').files||[]);if(remaining.length+files.length>5)throw Error('最多只能保存5张附件图片');for(const file of files){if(!/^image\/(jpeg|png|webp)$/.test(file.type))throw Error('附件只支持JPG、PNG、WebP');if(file.size>12*1024*1024)throw Error('原始图片超过12MB');remaining.push({name:file.name,data:await compressImage(file)})}
   let transferDeltaKind='';if(txType==='transfer'&&aa.currency===bb.currency&&toAmount!==amount){transferDeltaKind=String(form.get('transferDeltaKind')||'').trim();if(!['discount','fee','other'].includes(transferDeltaKind))throw Error('请选择转账差额性质');if(toAmount>amount&&transferDeltaKind==='fee')throw Error('到账更多不能选手续费');if(toAmount<amount&&transferDeltaKind==='discount')throw Error('到账较少不能选优惠')}let x={id:old?.id||uid(),type:txType,from,to:txType==='transfer'?to:'',amount,toAmount,transferDeltaKind,date:form.get('date'),time:form.get('time')||'',category:txType==='transfer'?'转账':String(form.get('category')||'未分类').trim()||'未分类',categoryId:txType==='income'||txType==='expense'||txType==='refund'?v42EnsureCategory(String(form.get('category')||'未分类').trim()||'未分类',txType==='income'?'income':'expense')?.id||'':'',description:String(form.get('description')||'').trim(),payee:String(form.get('payee')||'').trim(),note:String(form.get('note')||'').trim(),tags,discount,splits,attachments:remaining,adjustSign:old?.adjustSign===1?1:-1,created:old?.created||new Date().toISOString(),importFingerprint:old?.importFingerprint||'',source:old?.source||''};
   if(old)Object.assign(old,x);else state.transactions.push(x);await save();closeModal();render();t('交易已保存');return}
- if(name==='deleteTx'){let x=state.transactions.find(x=>x.id===editing);if(x&&confirm('确定删除这笔交易吗？')){state.transactions=state.transactions.filter(t=>t.id!==x.id);await save();closeModal();render();t('已删除交易')}return}
+ if(name==='deleteTx'){
+  const x = state.transactions.find(z=>z.id===editing);
+  if(!x) return;
+  modal('删除交易', `<div class="dangerZone" style="text-align:center;margin-top:10px;">确定要永久删除这笔交易吗？<br>此操作不可撤销。</div>`, `<button class="btn" data-act="closeModal">取消</button><button class="btn warn" data-act="confirmDeleteTx" data-id="${E(x.id)}">确定删除</button>`);
+  return;
+}
+if(name==='confirmDeleteTx'){
+  state.transactions = state.transactions.filter(t => t.id !== id);
+  await save(); closeModal(); render(); t('已删除交易'); return;
+}
 }catch(err){alert('操作失败：'+err.message)}}
 
 
@@ -2034,7 +2208,7 @@ function showSuggestions(field){
 }
 async function compressImage(file){return await new Promise((resolve,reject)=>{let img=new Image();let url=URL.createObjectURL(file);img.onload=()=>{try{let ratio=Math.min(1,1400/Math.max(img.width,img.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.width*ratio));canvas.height=Math.max(1,Math.round(img.height*ratio));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);let data=canvas.toDataURL('image/jpeg',.78);URL.revokeObjectURL(url);if(data.length>3_000_000)throw Error('压缩后附件仍过大');resolve(data)}catch(e){URL.revokeObjectURL(url);reject(e)}};img.onerror=()=>{URL.revokeObjectURL(url);reject(Error('附件图片无法读取'))};img.src=url})}
 
-function updateList(){if(page!=='ledger')return;let l=filtered();let el=$('ledgerResults');if(el)el.innerHTML=(l.length?l.slice(0,500).map(x=>txRow(x,searchSelectedAccount())).join(''):'<div class="empty">没有找到匹配的交易记录</div>')+(l.length>500?'<div class="empty">只显示最新500笔，请使用搜索缩小范围。</div>':'');if($('ledgerCount'))$('ledgerCount').textContent='共 '+l.length+' 笔';if($('ledgerTotals'))$('ledgerTotals').innerHTML=ledgerSummary(l)}
+function updateList(){if(page!=='ledger')return;let l=filtered();let el=$('ledgerResults');if(el)el.innerHTML=(l.length?l.slice(0,500).map(x=>txRow(x,searchSelectedAccount())).join(''):'<div class="empty">没有找到匹配的交易记录</div>')+(l.length>500?'<div class="empty">只显示最新500笔，请使用搜索缩小范围。</div>':'');if($('ledgerCount'))$('ledgerCount').textContent='共 '+l.length+'笔';if($('ledgerTotals'))$('ledgerTotals').innerHTML=ledgerSummary(l)}
 
 /* ===== v3.7 - v3.9 incremental enhancement: all account and transaction data stay local ===== */
 const JZ39_COLUMNS=['命名','当前余额','账户','转账','描述','交易对方','分类','日期','时间','备注','金额','货币','支票号码','标签'];
@@ -2107,7 +2281,7 @@ renderCategoryPicker=function(){
  const items=v39CatItems(q);window.__catItems=items;
  $('catResults').innerHTML=items.length?items.map((c,i)=>{
   const ps=c.name.split('/'),leaf=ps.pop(),depth=Math.min(ps.length,3);
-  return `<button type="button" class="catResult" data-act="selectCategory" data-id="${i}" style="padding-left:${14+depth*14}px"><b>${E(leaf)}</b><small>${ps.length?E(ps.join(' / '))+' · ':''}${c.total?`历史 ${c.total} 笔`:'自定义或常用'} ›</small></button>`
+  return `<button type="button" class="catResult" data-act="selectCategory" data-id="${i}" style="padding-left:${14+depth*14}px"><b>${E(leaf)}</b><small>${ps.length?E(ps.join(' / '))+' · ':''}${c.total?`历史 ${c.total}笔`:'自定义或常用'} ›</small></button>`
  }).join(''):'<div class="empty">没有匹配分类，可新增</div>';
 };
 function v39ManageCategories(){
@@ -2116,7 +2290,7 @@ function v39ManageCategories(){
 }
 function v39CategoryRows(list){return list.slice(0,450).map((c,i)=>{
  const parts=c.name.split('/');const label=parts.pop();const indent=Math.min(parts.length,3)*13;
- return `<div class="catTreeItem" style="margin-left:${indent}px"><div class="catlabel"><b>${E(label)}</b><small>${parts.length?E(parts.join(' / '))+' · ':''}${c.total} 笔历史交易</small></div><button class="btn tiny" data-v39="renameCategory" data-vcat="${E(c.name)}">修改/合并</button><button class="btn tiny" data-v39="moveCategory" data-dir="-1" data-vcat="${E(c.name)}">↑</button><button class="btn tiny" data-v39="moveCategory" data-dir="1" data-vcat="${E(c.name)}">↓</button><button class="btn tiny warn" data-v39="removeCategory" data-vcat="${E(c.name)}">删</button></div>`
+ return `<div class="catTreeItem" style="margin-left:${indent}px"><div class="catlabel"><b>${E(label)}</b><small>${parts.length?E(parts.join(' / '))+' · ':''}${c.total}笔历史交易</small></div><button class="btn tiny" data-v39="renameCategory" data-vcat="${E(c.name)}">修改/合并</button><button class="btn tiny" data-v39="moveCategory" data-dir="-1" data-vcat="${E(c.name)}">↑</button><button class="btn tiny" data-v39="moveCategory" data-dir="1" data-vcat="${E(c.name)}">↓</button><button class="btn tiny warn" data-v39="removeCategory" data-vcat="${E(c.name)}">删</button></div>`
  }).join('')||'<div class="empty">暂无分类</div>'}
 function v39RenameCategory(oldName,newName){
  const old=oldName.trim(),dst=newName.trim();if(!old||!dst||old===dst)return false;
@@ -2142,11 +2316,11 @@ async function v39CategoryAction(act,cat,direction){
    if(dst===null||dst.trim()===cat)return;
    if(!dst.trim())throw Error('不能设置空分类');
    const count=state.transactions.filter(x=>x.category===cat||(x.splits||[]).some(z=>z.category===cat)).length;
-   if(!confirm(`确定将「${cat}」改为「${dst.trim()}」吗？这会同步更新约 ${count} 笔交易的分类。建议先备份。`))return;
+   if(!confirm(`确定将「${cat}」改为「${dst.trim()}」吗？这会同步更新约 ${count}笔交易的分类。建议先备份。`))return;
    v39RenameCategory(cat,dst);
  }else if(act==='removeCategory'){
    const count=state.transactions.filter(x=>x.category===cat||(x.splits||[]).some(z=>z.category===cat)).length;
-   if(count){alert(`此分类已有 ${count} 笔交易，请先修改/合并到其他分类，不能直接删除。`);return;}
+   if(count){alert(`此分类已有 ${count}笔交易，请先修改/合并到其他分类，不能直接删除。`);return;}
    state.customCategories=(state.customCategories||[]).filter(x=>x!==cat);
    state.categoryOrder=(state.categoryOrder||[]).filter(x=>x!==cat);
    state.hiddenCategories=[...new Set([...(state.hiddenCategories||[]),cat])];
@@ -2283,7 +2457,7 @@ renderReports=function(){
   // 替换分类卡片
   const cats=[...s.cats.entries()].filter(([k,v])=>v!==0).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
   const max=Math.max(1,...cats.map(x=>Math.abs(x[1])));
-  const catCard=`<div class="card settingsCard"><div class="sectionTitle" style="margin-top:0"><h2>实际支出分类（净额）</h2><span class="subtle">${cats.length} 类</span></div>${cats.length?cats.map(([name,value])=>{const node=v42FindCategory(name,'expense');return `<div class="barRow"><div class="barName"><span class="v42ReportCatIcon">${node?v42Badge(node,'sm'):''}${E(name)}</span><b>${fmt(value,cur)}</b></div><div class="barTrack"><div class="barFill" style="width:${Math.max(1,Math.round(Math.abs(value)/max*100))}%"></div></div></div>`}).join(''):'<div class="empty">该月份暂无净支出分类</div>'}</div>`;
+  const catCard=`<div class="card settingsCard"><div class="sectionTitle" style="margin-top:0"><h2>实际支出分类（净额）</h2><span class="subtle">${cats.length} 类</span></div>${cats.length?cats.map(([name,value])=>{const node=v42FindCategory(name,'expense');return `<div class="barRow" data-act="jumpToCategory" data-id="${E(name)}" style="cursor:pointer"><div class="barName"><span class="v42ReportCatIcon">${node?v42Badge(node,'sm'):''}${E(name)}</span><b>${v422Money(value,cur)}</b></div>...<div class="barTrack"><div class="barFill" style="width:${Math.max(1,Math.round(Math.abs(value)/max*100))}%"></div></div></div>`}).join(''):'<div class="empty">该月份暂无净支出分类</div>'}</div>`;
   html=html.replace(/<div class="card settingsCard"><div class="sectionTitle" style="margin-top:0"><h2>实际支出分类<\/h2>[\s\S]*?<\/div>(?=<div class="card settingsCard" style="margin-top:14px">)/,catCard);
 
   // 添加 12个月趋势与贷款面板
@@ -2317,12 +2491,12 @@ async function v41GroupAction(name,id){
  if(name==='v41CreateGroup'){v41NewGroup($('v41GroupNew')?.value);await save();render();manageGroups();t('分组已创建');return}
  if(!g)throw Error('分组不存在');
  if(name==='v41RenameGroup'){const v=prompt('请输入新的分组名称：',g.name);if(v===null)return;const value=v.trim();if(!value||value.length>80)throw Error('分组名称应为1至80字');if((state.accountGroups||[]).some(x=>x.id!==id&&x.name===value))throw Error('已有同名分组');const old=g.name;g.name=value;for(const a of state.accounts)if(a.groupId===id)a.group=value;for(const key of Object.keys(state.groupOrder||{}))state.groupOrder[key]=(state.groupOrder[key]||[]).map(n=>n===old?value:n);}
- if(name==='v41DeleteGroup'){const cnt=state.accounts.filter(a=>a.groupId===id).length;if(!confirm(`删除「${g.name}」分组吗？组内 ${cnt} 个账户将移入“未分组”，不会删除账户及交易。`))return;for(const a of state.accounts)if(a.groupId===id){a.group='';a.groupId='';}state.accountGroups=state.accountGroups.filter(x=>x.id!==id)}
- if(name==='v41MoveGroup'){const ids=state.accounts.filter(a=>a.groupId===id);const options=[{id:'',name:'未分组'},...(state.accountGroups||[]).filter(x=>x.id!==id)].map((x,i)=>`${i}: ${x.name}`).join('\n');const chosen=prompt(`将「${g.name}」内 ${ids.length} 个账户批量移动到：\n${options}\n请输入目标序号（取消则不修改）：`);if(chosen===null)return;const all=[{id:'',name:'未分组'},...(state.accountGroups||[]).filter(x=>x.id!==id)];const i=Number(chosen);if(!Number.isInteger(i)||i<0||i>=all.length)throw Error('请输入有效的目标序号');const target=all[i];if(!confirm(`将 ${ids.length} 个账户移至「${target.name}」？`))return;for(const a of ids){a.groupId=target.id;a.group=target.name;a.sortOrder=nextAccountSort(a.currency,target.name)}}
+ if(name==='v41DeleteGroup'){const cnt=state.accounts.filter(a=>a.groupId===id).length;if(!confirm(`删除「${g.name}」分组吗？组内 ${cnt}个账户将移入“未分组”，不会删除账户及交易。`))return;for(const a of state.accounts)if(a.groupId===id){a.group='';a.groupId='';}state.accountGroups=state.accountGroups.filter(x=>x.id!==id)}
+ if(name==='v41MoveGroup'){const ids=state.accounts.filter(a=>a.groupId===id);const options=[{id:'',name:'未分组'},...(state.accountGroups||[]).filter(x=>x.id!==id)].map((x,i)=>`${i}: ${x.name}`).join('\n');const chosen=prompt(`将「${g.name}」内 ${ids.length}个账户批量移动到：\n${options}\n请输入目标序号（取消则不修改）：`);if(chosen===null)return;const all=[{id:'',name:'未分组'},...(state.accountGroups||[]).filter(x=>x.id!==id)];const i=Number(chosen);if(!Number.isInteger(i)||i<0||i>=all.length)throw Error('请输入有效的目标序号');const target=all[i];if(!confirm(`将 ${ids.length}个账户移至「${target.name}」？`))return;for(const a of ids){a.groupId=target.id;a.group=target.name;a.sortOrder=nextAccountSort(a.currency,target.name)}}
  await save();render();manageGroups();t('分组操作已保存');
 }
 function v41BatchGroupForm(){const groups=(state.accountGroups||[]).slice().sort((a,b)=>a.sortOrder-b.sortOrder);modal('批量设置账户分组',`<p class="smallHint">勾选需要调整的账户，并选择目标分组；未勾选的账户保持不变。不会影响余额或交易。</p><div class="v41BatchList">${sortedAccounts(state.accounts).map(a=>`<label class="v41BatchItem"><input type="checkbox" name="v41MoveAccount" value="${E(a.id)}"><span>${E(a.name)}<small>${E(a.group||'未分组')} · ${E(a.currency)}</small></span></label>`).join('')}</div><label class="inputLabel">移动至</label><select id="v41BatchTarget" class="field"><option value="">未分组</option>${groups.map(g=>`<option value="${E(g.id)}">${E(g.name)}</option>`).join('')}</select>`,`<button class="btn" data-act="manageGroups">返回分组管理</button><button class="btn soft" data-act="v41SaveBatchGroups">批量移动</button>`)}
-async function v41SaveBatchGroups(){const ids=[...document.querySelectorAll('[name=v41MoveAccount]:checked')].map(x=>x.value),id=$('v41BatchTarget')?.value||'',g=v41Group(id);if(!ids.length)throw Error('请至少选中一个账户');if(id&&!g)throw Error('分组无效');if(!confirm(`将 ${ids.length} 个账户移动到「${g?.name||'未分组'}」？`))return;const c=new Map();for(const a of state.accounts.filter(x=>ids.includes(x.id))){a.groupId=id;a.group=g?.name||'';const key=a.currency+'|'+a.group,cnt=c.get(key)||nextAccountSort(a.currency,a.group);a.sortOrder=cnt;c.set(key,cnt+10)}await save();render();manageGroups();t('账户已批量调整分组')}
+async function v41SaveBatchGroups(){const ids=[...document.querySelectorAll('[name=v41MoveAccount]:checked')].map(x=>x.value),id=$('v41BatchTarget')?.value||'',g=v41Group(id);if(!ids.length)throw Error('请至少选中一个账户');if(id&&!g)throw Error('分组无效');if(!confirm(`将 ${ids.length}个账户移动到「${g?.name||'未分组'}」？`))return;const c=new Map();for(const a of state.accounts.filter(x=>ids.includes(x.id))){a.groupId=id;a.group=g?.name||'';const key=a.currency+'|'+a.group,cnt=c.get(key)||nextAccountSort(a.currency,a.group);a.sortOrder=cnt;c.set(key,cnt+10)}await save();render();manageGroups();t('账户已批量调整分组')}
 function v41HexRGBA(hex,alpha){let h=/^#[0-9a-fA-F]{6}$/.test(hex)?hex:'#467fc7';const c=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`}
 function v41Blend(hex,r=.8){if(!/^#[0-9a-fA-F]{6}$/.test(hex||''))hex='#4981be';const c=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));return '#'+c.map(v=>Math.round(v*(1-r)+255*r).toString(16).padStart(2,'0')).join('').toUpperCase()}
 function v41ThemeBase(a){if(a?.themeMode==='custom'&&/^#[\da-fA-F]{6}$/.test(a.themeColor||''))return a.themeColor.toUpperCase();if(/^#[\da-fA-F]{6}$/.test(a?.autoThemeColor||''))return a.autoThemeColor.toUpperCase();const glyph=a?.icon||'auto';const iconic={'💳':'#B34B63','💰':'#D39B35','💵':'#659B48','👛':'#2B9A87','📱':'#477FC5','🏠':'#AC774A','🚗':'#438A9D','📈':'#399A70','📊':'#6370B6','🪙':'#B8923D','💎':'#3B94B8','✈️':'#548BC1','🛒':'#C58A37','🧾':'#687A9F','🎁':'#BE5574','☕':'#8D6247','🌐':'#397AA9','🇨🇳':'#CA4358','🇭🇰':'#B94760','🇺🇸':'#426CB4'};if(iconic[glyph])return iconic[glyph];const k=a?.kind||'bank';return ({bank:'#2779B8',credit:'#B34B63',wallet:'#2B9A87',cash:'#659B48',loan:'#AA7744',asset:'#7764B1',other:'#6D89A2'})[k]||'#4981BE'}
@@ -2449,10 +2623,10 @@ async function v42SaveCategory(id){const type=v42CatById(id)?.type||v42Tab,paren
  else{const count=state.categoryNodes.filter(x=>x.type===type&&x.parentId===parentId).length;state.categoryNodes.push({id:uid(),type,parentId,name,icon,color,hidden:false,sortOrder:(count+1)*10})}
  v42SyncPaths();await save();v42CatSearch='';v42ManageCategories();render();t('分类、图标与颜色已保存')}
 async function v42MoveCategory(id,dir){const n=v42CatById(id);if(!n)return;const sib=v42Sorted(n.type,n.parentId);const ix=sib.findIndex(x=>x.id===id),target=ix+Number(dir);if(ix<0||target<0||target>=sib.length)return t('已到同级边界');const a=sib[ix],b=sib[target];if(a.sortOrder===b.sortOrder){sib.forEach((x,i)=>x.sortOrder=(i+1)*10)}const old=a.sortOrder;a.sortOrder=b.sortOrder;b.sortOrder=old;await save();v42ManageCategories();render();t('分类顺序已调整')}
-async function v42DeleteCategory(id){const n=v42CatById(id);if(!n)return;const descendants=state.categoryNodes.filter(x=>x.id===id||v42Descends(x,id));const refs=state.transactions.filter(x=>descendants.some(z=>z.id===x.categoryId||(x.splits||[]).some(sp=>sp.categoryId===z.id)));if(refs.length)throw Error(`该分类及子分类关联 ${refs.length} 笔交易，请先移动或合并，不能删除`);if(!confirm(`删除「${v42Path(n)}」及其空子分类？不会删除任何交易。`))return;for(const z of descendants)z.hidden=true;v42SyncPaths();await save();v42ManageCategories();render();t('分类已删除')}
+async function v42DeleteCategory(id){const n=v42CatById(id);if(!n)return;const descendants=state.categoryNodes.filter(x=>x.id===id||v42Descends(x,id));const refs=state.transactions.filter(x=>descendants.some(z=>z.id===x.categoryId||(x.splits||[]).some(sp=>sp.categoryId===z.id)));if(refs.length)throw Error(`该分类及子分类关联 ${refs.length}笔交易，请先移动或合并，不能删除`);if(!confirm(`删除「${v42Path(n)}」及其空子分类？不会删除任何交易。`))return;for(const z of descendants)z.hidden=true;v42SyncPaths();await save();v42ManageCategories();render();t('分类已删除')}
 function v42QuickCategory(path){if(!path||path.length>120)throw Error('分类名称需要1至120字');const type=txType==='income'?'income':'expense';const node=v42EnsureCategory(path,type,true);if(!node)throw Error('分类名称无效');return node}
 const v42OldShowPicker=showCategoryPicker;showCategoryPicker=function(target=null){if(!target){v42ManageCategories();return}categoryTarget=target;categoryManager=false;$('catHeading').textContent='选择'+(txType==='income'?'收入':'支出')+'分类';$('catSearch').value='';$('catOverlay').hidden=false;renderCategoryPicker()};
-renderCategoryPicker=function(){if($('catOverlay').hidden)return;const q=$('catSearch').value.trim().toLocaleLowerCase(),type=txType==='income'?'income':'expense';const items=v42Flat(type).filter(x=>!q||x.path.toLocaleLowerCase().includes(q)).slice(0,450);window.__catItems=items.map(x=>({name:x.path,categoryId:x.node.id}));const totals=v42Totals();$('catResults').innerHTML=items.length?items.map((x,i)=>`<button type="button" class="v42CatPickerRow" data-act="selectCategory" data-id="${i}" style="padding-left:${Math.min(x.depth,4)*12+9}px">${v42Badge(x.node,'sm')}<span style="flex:1;min-width:0"><b>${E(x.node.name)}</b><small style="display:block;color:#8291a3">${x.depth?E(x.path)+' · ':''}${totals.get(x.node.id)?.ids.size||0} 笔</small></span><span style="color:#adb7c4">›</span></button>`).join(''):'<div class="empty">没有匹配的分类，可在下方创建</div>';$('catAdd').disabled=!q||!!v42FindCategory($('catSearch').value.trim(),type);$('catCount').textContent=`${items.length} 个匹配分类 · 默认继承父分类图标。`};
+renderCategoryPicker=function(){if($('catOverlay').hidden)return;const q=$('catSearch').value.trim().toLocaleLowerCase(),type=txType==='income'?'income':'expense';const items=v42Flat(type).filter(x=>!q||x.path.toLocaleLowerCase().includes(q)).slice(0,450);window.__catItems=items.map(x=>({name:x.path,categoryId:x.node.id}));const totals=v42Totals();$('catResults').innerHTML=items.length?items.map((x,i)=>`<button type="button" class="v42CatPickerRow" data-act="selectCategory" data-id="${i}" style="padding-left:${Math.min(x.depth,4)*12+9}px">${v42Badge(x.node,'sm')}<span style="flex:1;min-width:0"><b>${E(x.node.name)}</b><small style="display:block;color:#8291a3">${x.depth?E(x.path)+' · ':''}${totals.get(x.node.id)?.ids.size||0}笔</small></span><span style="color:#adb7c4">›</span></button>`).join(''):'<div class="empty">没有匹配的分类，可在下方创建</div>';$('catAdd').disabled=!q||!!v42FindCategory($('catSearch').value.trim(),type);$('catCount').textContent=`${items.length}个匹配分类 · 默认继承父分类图标。`};
 const v42OldTxRow=txRow;txRow=function(x,accId=''){let html=v42OldTxRow(x,accId);const type=v42TypeForTx(x);if(!type)return html;const node=v42CatById(x.categoryId)||v42FindCategory(x.category,type);if(!node)return html;return html.replace(/<span class="txGlyph[^\"]*">[^<]*<\/span>/,`<span class="txGlyph v42TxGlyph">${v42Badge(node,'sm')}</span>`)};
 const v42OldTxForm=txForm;txForm=function(id='',pref='',template=null){v42OldTxForm(id,pref,template);v42DecorateTxForm()};
 function v42DecorateTxForm(){const f=$('txForm'),cat=$('txCategory');if(!f||!cat)return;let badge=$('v42CategoryFormIcon');if(!badge){badge=document.createElement('div');badge.id='v42CategoryFormIcon';badge.className='v42CategoryFormIcon';cat.closest('.catField')?.insertAdjacentElement('afterend',badge)}v42UpdateFormIcon()}
@@ -2631,7 +2805,7 @@ function v422PreviewCsvImport(){const c=csvContext;if(!c)return;
  const sources=v422SourceRows(c),categories=v422CategoryChoices(c);c.v422Sources=sources;
  const accountsHTML=[...sources.values()].map(src=>{const matches=state.accounts.filter(a=>a.currency===src.currency&&a.name.trim().toLowerCase()===src.name.toLowerCase());const def=matches.length===1?matches[0].id:'__new__';const options=`<option value="__new__" ${def==='__new__'?'selected':''}>➕ 新建独立账户「${E(src.name)}」</option>`+state.accounts.filter(a=>a.currency===src.currency).map(a=>`<option value="${E(a.id)}" ${a.id===def?'selected':''}>${E(a.name)}${a.name.trim().toLowerCase()===src.name.toLowerCase()?'（同名）':''}</option>`).join('');return `<div class="v422MapRow"><div><b>${E(src.name)}</b><small>来源币种 ${E(src.currency)} ${matches.length>1?'⚠️ 有多个同名账户，请手动选择':''}</small></div><select class="field v422AccountMap" data-key="${E(v422MapKey(src.key))}">${options}</select></div>`}).join('');
  const categoryHTML=categories.map(cat=>`<div class="v422MapRow"><div><b>${E(cat)}</b><small>斜杠可能是名称的一部分，默认作为完整名称保存</small></div><select class="field v422CategoryMap" data-key="${E(v422MapKey(cat))}"><option value="literal">作为单个分类（用全角／显示）</option><option value="tree">按 / 识别父子分类</option></select></div>`).join('');
- modal('导入前核对',`<div class="notice blueTint"><b>${E(c.file.name)}</b><br>下面先选择每个 MoneyWiz 账户导入到简账的哪个账户；同名账户不会被直接合并。只有确认后才写入数据。</div><div class="sectionTitle"><h2>账户映射</h2><span class="subtle">${sources.size} 个</span></div>${accountsHTML||'<p class="smallHint">未检测到账户名称</p>'}<div class="sectionTitle"><h2>分类层级确认</h2><span class="subtle">${categories.length} 个斜杠分类</span></div><p class="smallHint">MoneyWiz 的 ► 明确表示父子级，自动识别。例如「住房 ► 贷款利息」→「住房/贷款利息」。带 / 的名称由你决定是否拆分。</p>${categoryHTML||'<div class="notice">未发现歧义斜杠分类。</div>'}<div id="v422ReviewResult" class="v422ReviewResult"></div><label class="inlineCheck"><input type="checkbox" id="v422AllowSkipErrors"> 如果有无效记录，我确认跳过这些行</label><label class="inlineCheck"><input type="checkbox" id="v422AllowMismatch"> 如果余额有差异，我已核对原因，仍选择继续导入</label><label class="inlineCheck"><input type="checkbox" id="v422AllowIssues"> 我已核对可能存在歧义的交易性质、账户合并和分类提醒</label><div class="notice">本版不会修改已有账户的期初余额；${c.v422Align?'当前为空白账本，已启用按完整报表摘要校准新账户期初余额。':'本次不自动校准账户期初余额。'}导入前建议生成完整JSON备份。</div>`,`<button class="btn" data-act="v422BackMap">返回映射</button><button class="btn" data-act="v422ExportAudit">导出核查明细</button><button class="btn soft" data-act="v422CommitCsv">确认导入</button>`);
+ modal('导入前核对',`<div class="notice blueTint"><b>${E(c.file.name)}</b><br>下面先选择每个 MoneyWiz 账户导入到简账的哪个账户；同名账户不会被直接合并。只有确认后才写入数据。</div><div class="sectionTitle"><h2>账户映射</h2><span class="subtle">${sources.size}个</span></div>${accountsHTML||'<p class="smallHint">未检测到账户名称</p>'}<div class="sectionTitle"><h2>分类层级确认</h2><span class="subtle">${categories.length}个斜杠分类</span></div><p class="smallHint">MoneyWiz 的 ► 明确表示父子级，自动识别。例如「住房 ► 贷款利息」→「住房/贷款利息」。带 / 的名称由你决定是否拆分。</p>${categoryHTML||'<div class="notice">未发现歧义斜杠分类。</div>'}<div id="v422ReviewResult" class="v422ReviewResult"></div><label class="inlineCheck"><input type="checkbox" id="v422AllowSkipErrors"> 如果有无效记录，我确认跳过这些行</label><label class="inlineCheck"><input type="checkbox" id="v422AllowMismatch"> 如果余额有差异，我已核对原因，仍选择继续导入</label><label class="inlineCheck"><input type="checkbox" id="v422AllowIssues"> 我已核对可能存在歧义的交易性质、账户合并和分类提醒</label><div class="notice">本版不会修改已有账户的期初余额；${c.v422Align?'当前为空白账本，已启用按完整报表摘要校准新账户期初余额。':'本次不自动校准账户期初余额。'}导入前建议生成完整JSON备份。</div>`,`<button class="btn" data-act="v422BackMap">返回映射</button><button class="btn" data-act="v422ExportAudit">导出核查明细</button><button class="btn soft" data-act="v422CommitCsv">确认导入</button>`);
  v422RefreshReview();
 }
 function v422BuildPlan(c,opts){const get=(r,k)=>c.map[k]>=0?String(r[c.map[k]]??'').trim():'',sources=c.v422Sources||v422SourceRows(c),byKey=new Map(),addAccounts=[],issues=[],errors=[],extraOriginal=[];
@@ -2675,14 +2849,14 @@ function v422BuildPlan(c,opts){const get=(r,k)=>c.map[k]>=0?String(r[c.map[k]]??
 function v422RefreshReview(){const c=csvContext,el=$('v422ReviewResult');if(!el||!c)return;try{const plan=v422BuildPlan(c,v422ReadPlanOptions());c.v422Plan=plan;
  const colorDiff=x=>x.difference===null?'未提供余额摘要':x.difference===0?'一致':'⚠️ 差异 '+fmt(x.difference,x.currency,true);
  const rows=plan.reconciliations.map(x=>`<tr><td>${E(x.name)}</td><td>${E(x.currency)}</td><td>${fmt(x.expected,x.currency)}</td><td>${x.sourceBalance===null?'—':fmt(x.sourceBalance,x.currency)}</td><td>${colorDiff(x)}</td></tr>`).join('');
- el.innerHTML=`<div class="v422Metrics"><div><small>新增账户</small><b>${plan.addAccounts.length}</b></div><div><small>新增交易</small><b>${plan.incoming.length}</b></div><div><small>跳过重复</small><b>${plan.dup}</b></div><div><small>无效记录</small><b>${plan.errors.length}</b></div></div><div class="sectionTitle"><h2>导入后余额核对</h2><span class="subtle">不改现有期初余额</span></div><div class="previewWrap"><table class="previewTable"><thead><tr><th>账户</th><th>币种</th><th>预计余额</th><th>来源摘要</th><th>核对结果</th></tr></thead><tbody>${rows}</tbody></table></div><p class="smallHint">余额核对依据文件的当前余额摘要。若只导入部分日期、或另有未包含在本次CSV中的历史交易，差异可能合理；请确认后再导入。</p>${plan.mismatched.length?`<div class="notice v422Warning">⚠️ ${plan.mismatched.length} 个账户与来源余额摘要不一致，需核对并勾选确认。</div>`:''}${plan.errors.length?`<div class="notice v422Warning">⚠️ 无效记录 ${plan.errors.length} 行：${plan.errors.slice(0,6).map(E).join('；')}</div>`:''}${plan.issues.length?`<div class="notice">其他提醒 ${plan.issues.length} 项：${plan.issues.slice(0,5).map(E).join('；')}</div>`:''}`;
+ el.innerHTML=`<div class="v422Metrics"><div><small>新增账户</small><b>${plan.addAccounts.length}</b></div><div><small>新增交易</small><b>${plan.incoming.length}</b></div><div><small>跳过重复</small><b>${plan.dup}</b></div><div><small>无效记录</small><b>${plan.errors.length}</b></div></div><div class="sectionTitle"><h2>导入后余额核对</h2><span class="subtle">不改现有期初余额</span></div><div class="previewWrap"><table class="previewTable"><thead><tr><th>账户</th><th>币种</th><th>预计余额</th><th>来源摘要</th><th>核对结果</th></tr></thead><tbody>${rows}</tbody></table></div><p class="smallHint">余额核对依据文件的当前余额摘要。若只导入部分日期、或另有未包含在本次CSV中的历史交易，差异可能合理；请确认后再导入。</p>${plan.mismatched.length?`<div class="notice v422Warning">⚠️ ${plan.mismatched.length}个账户与来源余额摘要不一致，需核对并勾选确认。</div>`:''}${plan.errors.length?`<div class="notice v422Warning">⚠️ 无效记录 ${plan.errors.length} 行：${plan.errors.slice(0,6).map(E).join('；')}</div>`:''}${plan.issues.length?`<div class="notice">其他提醒 ${plan.issues.length} 项：${plan.issues.slice(0,5).map(E).join('；')}</div>`:''}`;
  }catch(err){c.v422Plan=null;el.innerHTML=`<div class="notice v422Warning">无法生成导入预览：${E(err.message)}</div>`}}
 async function v422CommitCsv(){const c=csvContext;if(!c)throw Error('请先选择CSV文件');const plan=v422BuildPlan(c,v422ReadPlanOptions());
  if(!plan.incoming.length&&!plan.addAccounts.length)throw Error('没有新交易或账户可导入，可能全部是重复记录');
  if(plan.errors.length&&!$('v422AllowSkipErrors')?.checked)throw Error(`有${plan.errors.length}条无法解析的记录，请先检查预览，或勾选允许跳过`);
  if(plan.mismatched.length&&!$('v422AllowMismatch')?.checked)throw Error(`有${plan.mismatched.length}个账户存在余额差异，请核实后勾选确认`);
  if(plan.issues.length&&!$('v422AllowIssues')?.checked)throw Error(`有${plan.issues.length}项需要人工核对的提醒，请阅读核查结果并勾选确认`);
- const summary=`将新增 ${plan.addAccounts.length} 个账户、${plan.incoming.length} 笔交易；跳过 ${plan.dup} 笔重复和 ${plan.errors.length} 笔异常。${plan.mismatched.length?'\n有 '+plan.mismatched.length+' 个余额差异。':''}\n\n已保存完整JSON备份后，确认写入？`;
+ const summary=`将新增 ${plan.addAccounts.length}个账户、${plan.incoming.length}笔交易；跳过 ${plan.dup}笔重复和 ${plan.errors.length}笔异常。${plan.mismatched.length?'\n有 '+plan.mismatched.length+'个余额差异。':''}\n\n已保存完整JSON备份后，确认写入？`;
  if(!confirm(summary))return;
  const batchId='imp_'+uid();plan.incoming.forEach(x=>x.importBatchId=batchId);
  const old=state;
@@ -2702,7 +2876,7 @@ function v422ExportAudit(){const c=csvContext;if(!c)throw Error('无待核查文
  for(const x of p.errors)rows.push(['无法解析的行',x,'','','','']);for(const x of p.issues)rows.push(['需要核对',x,'','','','']);
  rows.push(['导入汇总',`新增${p.incoming.length}笔；重复${p.dup}笔；无效${p.errors.length}笔；新账户${p.addAccounts.length}个`,'','','','']);
  const out='\ufeff'+rows.map(r=>r.map(safeCSV).join(',')).join('\r\n');download(new Blob([out],{type:'text/csv;charset=utf-8'}),`简账_CSV导入核查_${now()}.csv`);t('CSV 核查明细已导出');}
-function v422BatchHistory(){const batches=[...(state.importBatches||[])].reverse();modal('导入批次与余额对账',`<div class="notice blueTint">这里只记录 v4.2.2 之后的CSV导入。旧版本已有交易不会被批量撤销。每次撤销仅删除本批次新增且未被编辑的交易，并且只在安全时删除新建账户。</div>${batches.length?batches.map(b=>`<div class="v422BatchCard"><b>${E(b.fileName)}</b><small>${E(b.when.replace('T',' ').slice(0,19))}</small><p class="smallHint">新增 ${b.added} 笔 · 重复 ${b.duplicates} 笔 · 无效 ${b.invalid} 笔 · 新账户 ${b.accountIds.length} 个</p><div class="settingsActions"><button class="btn tiny" data-act="v422BatchDetail" data-id="${E(b.id)}">查看对账</button><button class="btn tiny warn" data-act="v422UndoBatch" data-id="${E(b.id)}">撤销此批次</button></div></div>`).join(''):'<div class="empty">暂无新版CSV导入记录。</div>'}`,`<button class="btn soft" data-act="closeModal">关闭</button>`)}
+function v422BatchHistory(){const batches=[...(state.importBatches||[])].reverse();modal('导入批次与余额对账',`<div class="notice blueTint">这里只记录 v4.2.2 之后的CSV导入。旧版本已有交易不会被批量撤销。每次撤销仅删除本批次新增且未被编辑的交易，并且只在安全时删除新建账户。</div>${batches.length?batches.map(b=>`<div class="v422BatchCard"><b>${E(b.fileName)}</b><small>${E(b.when.replace('T',' ').slice(0,19))}</small><p class="smallHint">新增 ${b.added}笔 · 重复 ${b.duplicates}笔 · 无效 ${b.invalid}笔 · 新账户 ${b.accountIds.length}个</p><div class="settingsActions"><button class="btn tiny" data-act="v422BatchDetail" data-id="${E(b.id)}">查看对账</button><button class="btn tiny warn" data-act="v422UndoBatch" data-id="${E(b.id)}">撤销此批次</button></div></div>`).join(''):'<div class="empty">暂无新版CSV导入记录。</div>'}`,`<button class="btn soft" data-act="closeModal">关闭</button>`)}
 function v422BatchDetail(id){const b=(state.importBatches||[]).find(x=>x.id===id);if(!b)throw Error('批次不存在');modal('导入余额核对',`<div class="notice blueTint">${E(b.fileName)}<br>${E(b.when)}<br>这里保存的是导入时的余额核对结果，之后的交易不会修改此快照。</div>${(b.errorDetails?.length||b.issueDetails?.length)?`<div class="notice">${[...(b.errorDetails||[]),...(b.issueDetails||[])].slice(0,20).map(E).join('；')}</div>`:''}<div class="previewWrap"><table class="previewTable"><thead><tr><th>账户</th><th>导入后预计</th><th>MoneyWiz 摘要</th><th>差异</th></tr></thead><tbody>${b.reconciliations.map(x=>`<tr><td>${E(x.name)}</td><td>${fmt(x.expected,x.currency)}</td><td>${x.sourceBalance===null?'—':fmt(x.sourceBalance,x.currency)}</td><td>${x.difference===null?'—':fmt(x.difference,x.currency,true)}</td></tr>`).join('')}</tbody></table></div>`,`<button class="btn" data-act="v422BatchHistory">返回批次列表</button>`)}
 async function v422UndoBatch(id){const b=(state.importBatches||[]).find(x=>x.id===id);if(!b)throw Error('批次不存在');
  const ids=new Set(b.transactionIds),newAccounts=new Set(b.accountIds),existing=new Map(state.transactions.map(x=>[x.id,x]));
@@ -2710,7 +2884,7 @@ async function v422UndoBatch(id){const b=(state.importBatches||[]).find(x=>x.id=
  for(const aId of newAccounts){const a=account(aId);if(!a||v422AccountStamp(a)!==b.accountSignatures?.[aId])throw Error(`本批次新建的账户「${a?.name||aId}」已经修改；为避免误删，请先恢复备份或手动核对。`)}
  for(const txid of ids){const x=existing.get(txid);if(!x||x.importBatchId!==id||v422Stamp(x)!==b.signatures[txid])throw Error('本批次中有交易被修改、删除或关联发生变化。为避免误删，已阻止撤销。请使用完整JSON备份恢复或手动核对。')}
  for(const aId of newAccounts){const linked=state.transactions.filter(x=>!ids.has(x.id)&&(x.from===aId||x.to===aId));if(linked.length)throw Error(`新增账户「${aName(aId)}」已有${linked.length}笔后续交易，不能撤销整个批次。`)}
- if(!confirm(`撤销导入「${b.fileName}」？\n将移除本批次的 ${ids.size} 笔交易以及 ${newAccounts.size} 个无其他流水的新账户。\n不会触碰导入前已有账户的期初余额和历史交易。\n\n确定继续？`))return;
+ if(!confirm(`撤销导入「${b.fileName}」？\n将移除本批次的 ${ids.size}笔交易以及 ${newAccounts.size}个无其他流水的新账户。\n不会触碰导入前已有账户的期初余额和历史交易。\n\n确定继续？`))return;
  const old=state;
  try{state={...state,transactions:state.transactions.filter(x=>!ids.has(x.id)),accounts:state.accounts.filter(a=>!newAccounts.has(a.id)),importBatches:state.importBatches.filter(x=>x.id!==id)};state=validate(state);await save();v422BatchHistory();render();t('本次导入已撤销；已有账本不变')}
  catch(e){state=old;render();throw e}
@@ -2779,6 +2953,7 @@ else if(el.hasAttribute('data-group-check')){
  else if(el.hasAttribute('data-filter-type')){const val=el.dataset.filterType;filter.types=el.checked?[...new Set([...filter.types,val])]:filter.types.filter(v=>v!==val)}
  else if(el.hasAttribute('data-filter-category')){const val=el.dataset.filterCategory;filter.categories=el.checked?[...new Set([...filter.categories,val])]:filter.categories.filter(v=>v!==val)}
  else if(el.hasAttribute('data-filter-tag')){const val=el.dataset.filterTag;filter.tags=el.checked?[...new Set([...filter.tags,val])]:filter.tags.filter(v=>v!==val)}
+else if(el.hasAttribute('data-filter-payee')){const val=el.dataset.filterPayee;filter.payees=el.checked?[...new Set([...filter.payees,val])]:filter.payees.filter(v=>v!==val)}
  else return false;
  updateList();refreshFilterLabels();return true
 }
