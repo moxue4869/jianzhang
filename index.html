@@ -1130,6 +1130,14 @@ function renderDrilldownSummary(list, filter){
     details.rank-more[open] .rank-txt-close { display: inline !important; }
     details.rank-more summary::-webkit-details-marker { display: none; }
     details.rank-more summary { list-style: none; }
+ /* 财务报表顶部筛选按钮：禁止文字换行 */
+button[data-act="clearSubFilter"],
+button[data-act="clearJumpFilter"] {
+  white-space: nowrap;
+  flex: 0 0 auto;
+  width: max-content;
+  min-width: max-content;
+}
   </style>
   <div class="card settingsCard" style="padding:18px;">
     ${headerHtml}
