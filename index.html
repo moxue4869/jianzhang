@@ -187,6 +187,22 @@ textarea { resize: vertical; }
   .catHead, .catControls, .catList { padding-left: 12px; padding-right: 12px; }
   .modalFoot { padding-left: 14px; padding-right: 14px; }
 }
+/* 分类分析：展开/收起文字切换 */
+details.report-cat-more .rank-txt-open {
+    display: inline;
+}
+
+details.report-cat-more .rank-txt-close {
+    display: none;
+}
+
+details.report-cat-more[open] .rank-txt-open {
+    display: none !important;
+}
+
+details.report-cat-more[open] .rank-txt-close {
+    display: inline !important;
+}
 </style><link rel="manifest" href="./manifest.webmanifest"><link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png"><link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png"><style id="v42-styles">
 .v42Badge{width:38px;height:38px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:11px;background:var(--v42-bg,#7390aa);color:#fff;overflow:hidden}
 .v42Badge svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.85;stroke-linejoin:round;stroke-linecap:round}
@@ -1098,8 +1114,8 @@ function renderDrilldownSummary(list, filter){
     const top5 = rows.slice(0, 5).join('');
     const rest = rows.length > 5 ? `<details class="rank-more" style="margin-top:16px; border-top:1px dashed #eef0f4; padding-top:12px;">
       <summary style="cursor:pointer; color:#1681ed; font-size:13px; outline:none;">
-        <span class="rank-txt-open">展开其余${rows.length - 5}项 ▾</span>
-        <span class="rank-txt-close" style="display:none;">收起 ▴</span>
+        <span class="rank-txt-open">展开其余${rows.length - 5}项▾</span>
+        <span class="rank-txt-close" style="display:none;">收起▴</span>
       </summary>
       <div>${rows.slice(5).join('')}</div>
     </details>` : '';
@@ -1128,10 +1144,11 @@ function renderDrilldownSummary(list, filter){
   }
 
   return `<style>
-    details.rank-more[open] .rank-txt-open { display: none !important; }
-    details.rank-more[open] .rank-txt-close { display: inline !important; }
-    details.rank-more summary::-webkit-details-marker { display: none; }
-    details.rank-more summary { list-style: none; }
+details.rank-more[open] .rank-txt-open { display: none !important; }
+details.rank-more[open] .rank-txt-close { display: inline !important; }
+details.rank-more summary::-webkit-details-marker { display: none; }
+details.rank-more summary { list-style: none; }
+
 /* 财务报表顶部筛选按钮：禁止文字换行 */
 button[data-act="clearSubFilter"],
 button[data-act="clearJumpFilter"] {
@@ -1774,6 +1791,7 @@ if(name==='setReportCatTab'){
     reportCatType = id;
   } else if(id==='category'||id==='payee'){
     reportCatGroup = id;
+    if(id==='category') reportPayeeSearch = '';
   }
   render();
   return;
@@ -2505,6 +2523,7 @@ function v422ReportSlice(cur,startDate,endDate,ids){
 let reportCatType = 'expense';
 let reportCatGroup = 'category';
 let reportPayeeExact = '';
+let reportPayeeSearch = '';
 const v422OldRenderReports=renderReports;
 renderReports=function(){
 console.log('进入新版 renderReports');
@@ -2566,33 +2585,69 @@ const aggregateData = (type, groupBy) => {
     .sort((a, b) => b[1] - a[1]);
 };
 const filteredTx=state.transactions.filter(x=>x.date>=reportDateStart&&x.date<=reportDateEnd&&accIds.has(x.from));
-  const catData = aggregateData(reportCatType, reportCatGroup);
+  const catDataAll = aggregateData(reportCatType, reportCatGroup);
+const catData = reportCatGroup === 'payee' && reportPayeeSearch.trim()
+  ? catDataAll.filter(([name]) => name.toLocaleLowerCase().includes(reportPayeeSearch.trim().toLocaleLowerCase()))
+  : catDataAll;
   const maxCat = Math.max(1, ...catData.map(x => x[1]));
   
   const catCard = `<div class="card settingsCard">
-    <div class="sectionTitle" style="margin-top:0; flex-wrap:wrap; gap:10px;">
-      <h2>分类分析</h2>
-      <div class="pill" style="margin-left:auto;">
-        <button class="${reportCatType==='expense'?'active':''}" data-act="setReportCatTab" data-id="expense">支出</button>
-        <button class="${reportCatType==='income'?'active':''}" data-act="setReportCatTab" data-id="income">收入</button>
-      </div>
-      <div class="pill">
-        <button class="${reportCatGroup==='category'?'active':''}" data-act="setReportCatTab" data-id="category">按分类</button>
-        <button class="${reportCatGroup==='payee'?'active':''}" data-act="setReportCatTab" data-id="payee">按对象</button>
-      </div>
+    
+<div class="sectionTitle" style="margin-top:0; display:block;">
+  <h2>分类分析</h2>
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:nowrap; gap:8px; margin-top:14px;">
+    <div class="pill">
+      <button class="${reportCatType==='expense'?'active':''}" data-act="setReportCatTab" data-id="expense">支出</button>
+      <button class="${reportCatType==='income'?'active':''}" data-act="setReportCatTab" data-id="income">收入</button>
     </div>
-    ${catData.length ? catData.map(([name, value]) => {
-      const node = reportCatGroup === 'category' ? v42FindCategory(name, reportCatType) : null;
-      const jumpId = reportCatType === 'income' ? 'income:' + name : name;
-      const isCategory = reportCatGroup === 'category';
-const canJump = isCategory || name !== '未知对象';
-const action = isCategory ? 'jumpToCategory' : 'drilldownFilter';
-const extra = isCategory ? '' : 'data-type="payee"';
-return `<div class="barRow" data-act="${canJump ? action : ''}" data-id="${E(isCategory ? jumpId : name)}" ${extra} style="cursor:${canJump ? 'pointer' : 'default'}">
-        <div class="barName"><span>${E(name)}</span><b>${fmt(value,cur)}</b></div>
-        <div class="barTrack"><div class="barFill" style="width:${Math.max(1,Math.round(value/maxCat*100))}%"></div></div>
-      </div>`;
-    }).join('') : '<div class="empty">该时间段暂无数据</div>'}
+    <div class="pill">
+      <button class="${reportCatGroup==='category'?'active':''}" data-act="setReportCatTab" data-id="category">按分类</button>
+      <button class="${reportCatGroup==='payee'?'active':''}" data-act="setReportCatTab" data-id="payee">按对象</button>
+    </div>
+  </div>
+</div>
+${reportCatGroup === 'payee' ? `
+  <div class="accountSearch" style="margin:12px 0;">
+    <span>${ic('search')}</span>
+    <input
+      id="reportPayeeSearch"
+      type="search"
+      autocomplete="off"
+      placeholder="搜索对象名称"
+      value="${E(reportPayeeSearch)}"
+      aria-label="搜索对象"
+    >
+  </div>
+` : ''}
+    
+${catData.length ? (() => {
+  const rows = catData.map(([name, value]) => {
+    const jumpId = reportCatType === 'income' ? 'income:' + name : name;
+    const isCategory = reportCatGroup === 'category';
+    const canJump = isCategory || name !== '未知对象';
+    const action = isCategory ? 'jumpToCategory' : 'drilldownFilter';
+    const extra = isCategory ? '' : 'data-type="payee"';
+
+    return `<div class="barRow" data-act="${canJump ? action : ''}" data-id="${E(isCategory ? jumpId : name)}" ${extra} style="cursor:${canJump ? 'pointer' : 'default'}">
+      <div class="barName"><span>${E(name)}</span><b>${fmt(value,cur)}</b></div>
+      <div class="barTrack"><div class="barFill" style="width:${Math.max(1,Math.round(value/maxCat*100))}%"></div></div>
+    </div>`;
+  });
+
+  const top10 = rows.slice(0, 10).join('');
+  const rest = rows.length > 10
+    ? `<details class="rank-more report-cat-more" style="margin-top:16px; border-top:1px dashed #eef0f4; padding-top:12px;">
+        <summary style="cursor:pointer; color:#1681ed; font-size:13px; outline:none;">
+          <span class="rank-txt-open">展开其余${rows.length - 10}项▾</span>
+          <span class="rank-txt-close" style="display:none;">收起▴</span>
+        </summary>
+        <div>${rows.slice(10).join('')}</div>
+      </details>`
+    : '';
+
+  return top10 + rest;
+})() : '<div class="empty">该时间段暂无数据</div>'}
+
   </div>`;
 
 const pos = html.indexOf('实际支出分类');
@@ -3106,6 +3161,15 @@ else if(el.hasAttribute('data-filter-payee')){const val=el.dataset.filterPayee;f
 document.addEventListener('input',e=>{if(e.target.id==='txAccountSearchInput')renderTxAccountPicker();else if(e.target.id==='catSearch')renderCategoryPicker();else if(e.target.id==='accountSearchQ'){
   accountSearch=e.target.value;
   refreshAccountSearch()
+}else if(e.target.id==='reportPayeeSearch'){
+  reportPayeeSearch=e.target.value;
+  const pos=e.target.selectionStart;
+  render();
+  const input=document.getElementById('reportPayeeSearch');
+  if(input){
+    input.focus();
+    input.setSelectionRange(pos,pos);
+  }
 }else if(e.target.id==='searchQ'){
   reportPayeeExact = '';
   filter.q=e.target.value;
