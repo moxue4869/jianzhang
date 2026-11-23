@@ -633,14 +633,19 @@ if (hasReward) {
   if (hasReward) {
     if (isAchieved) {
       bgStyle = 'background:#e8f8f0;'; // 极浅的绿色底
-      rewardTag = `<span style="display:inline-block;font-size:10px;background:#10b981;color:#fff;padding:2px 6px;border-radius:6px;margin-left:6px;vertical-align:middle;font-weight:600;line-height:1.2">已达成</span>`;
+      rewardTag = `<span style="display:inline-block;white-space:nowrap;flex-shrink:0;font-size:10px;background:#10b981;color:#fff;padding:2px 6px;border-radius:6px;margin-left:6px;vertical-align:middle;font-weight:600;line-height:1.2">已达成</span>`;
     } else {
       bgStyle = 'background:#fffbf5;'; // 极浅的橙色底
-      rewardTag = `<span style="display:inline-block;font-size:10px;background:#ff8c00;color:#fff;padding:2px 6px;border-radius:6px;margin-left:6px;vertical-align:middle;font-weight:600;line-height:1.2">进行中</span>`;
+      rewardTag = `<span style="display:inline-block;white-space:nowrap;flex-shrink:0;font-size:10px;background:#ff8c00;color:#fff;padding:2px 6px;border-radius:6px;margin-left:6px;vertical-align:middle;font-weight:600;line-height:1.2">进行中</span>`;
     }
   }
   
-  return `<button class="accountRow" data-act="openAccount" data-id="${E(a.id)}" style="${bgStyle}"><span class="accountIcon ${colors(a.id)}" style="box-shadow:0 2px 10px ${v41HexRGBA(v41ThemeBase(a),.18)}">${accountIconContent(a)}</span><span style="min-width:0;flex:1"><span class="accountName" style="display:flex;align-items:center;flex-wrap:wrap;">${E(a.name)}${rewardTag}</span></span><span class="accountMoney" style="color:${b<0?'#269b62':b>0?'#d94b4b':'#6e7785'}">${fmt(b,a.currency)}</span><span class="arrow">›</span></button>`
+  return `<button class="accountRow" data-act="openAccount" data-id="${E(a.id)}" style="${bgStyle}"><span class="accountIcon ${colors(a.id)}" style="box-shadow:0 2px 10px ${v41HexRGBA(v41ThemeBase(a),.18)}">${accountIconContent(a)}</span><span style="min-width:0;flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:4px;">
+  <span class="accountName" style="min-width:0;max-width:100%;overflow-wrap:anywhere;">
+    ${E(a.name)}
+  </span>
+  ${rewardTag.replace('margin-left:6px;', 'margin-left:0;')}
+</span><span class="accountMoney" style="color:${b<0?'#269b62':b>0?'#d94b4b':'#6e7785'}">${fmt(b,a.currency)}</span><span class="arrow">›</span></button>`
 }
 function accountMatches(a,q){let terms=q.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);if(!terms.length)return true;const text=[a.name,a.group,a.currency,a.kind].join(' ').toLocaleLowerCase();return terms.every(x=>text.includes(x))}
 function accountListsHtml(){
@@ -1849,10 +1854,9 @@ function importCSV(){let c=csvContext;if(!c)return;
 async function restore(file){try{if(file.size>120e6)throw Error('备份文件超过120MB，请先分批减少附件');const text=await file.text(),obj=validate(JSON.parse(text));if(!confirm(`即将用备份覆盖当前所有账本。\n包含${obj.accounts.length}个账户、${obj.transactions.length}笔交易。\n\n确定已备份当前数据并继续？`))return;let old=state;state=obj;try{await save();accountDetail='';page='accounts';render();t('完整备份已恢复')}catch(e){state=old;render()}}catch(e){alert('恢复失败：'+e.message)}}
 async function act(name,id,element){try{
 if(name==='clearSubFilter'){
-  if(filter.jumpType){
-    filter.accounts = [];
-    filter.q = '';
-  }
+  filter.accounts = [];
+  filter.q = '';
+  reportPayeeExact = '';
   render();
   return;
 }
@@ -1893,10 +1897,14 @@ if(name==='drilldownFilter'){
       filter.accounts = [id];
     }
   } else if(type === 'payee'){
-    // 清除之前的筛选条件
-    filter = blankFilter();
+  // 暂存原有的专项筛选条件
+  const oldJumpType = filter.jumpType;
 
-    // 保留当前报表的日期范围
+  // 清除之前的筛选条件
+  filter = blankFilter();
+  filter.jumpType = oldJumpType;
+
+  // 保留当前报表的日期范围
     filter.dateOp = 'range';
     filter.dateStart = reportDateStart;
     filter.dateEnd = reportDateEnd;
@@ -2366,7 +2374,7 @@ function showSuggestions(field){
 }
 async function compressImage(file){return await new Promise((resolve,reject)=>{let img=new Image();let url=URL.createObjectURL(file);img.onload=()=>{try{let ratio=Math.min(1,1400/Math.max(img.width,img.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.width*ratio));canvas.height=Math.max(1,Math.round(img.height*ratio));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);let data=canvas.toDataURL('image/jpeg',.78);URL.revokeObjectURL(url);if(data.length>3_000_000)throw Error('压缩后附件仍过大');resolve(data)}catch(e){URL.revokeObjectURL(url);reject(e)}};img.onerror=()=>{URL.revokeObjectURL(url);reject(Error('附件图片无法读取'))};img.src=url})}
 
-function updateList(){if(page!=='ledger')return;let l=filtered();let el=$('ledgerResults');if(el)el.innerHTML=(l.length?l.slice(0,500).map(x=>txRow(x,searchSelectedAccount())).join(''):'<div class="empty">没有找到匹配的交易记录</div>')+(l.length>500?'<div class="empty">只显示最新500笔，请使用搜索缩小范围。</div>':'');if($('ledgerCount'))$('ledgerCount').textContent='共 '+l.length+'笔';if($('ledgerTotals'))$('ledgerTotals').innerHTML=ledgerSummary(l)}
+function updateList(){if(page!=='ledger')return;let l=filtered();let el=$('ledgerResults');if(el)el.innerHTML=(l.length?l.slice(0,500).map(x=>txRow(x,searchSelectedAccount())).join(''):'<div class="empty">没有找到匹配的交易记录</div>')+(l.length>500?'<div class="empty">只显示最新500笔，请使用搜索缩小范围。</div>':'');if($('ledgerCount'))$('ledgerCount').textContent='共 '+l.length+'笔';if($('ledgerTotals'))$('ledgerTotals').innerHTML=filter.jumpType?renderDrilldownSummary(l,filter):ledgerSummary(l)}
 
 /* ===== v3.7 - v3.9 incremental enhancement: all account and transaction data stay local ===== */
 const JZ39_COLUMNS=['命名','当前余额','账户','转账','描述','交易对方','分类','日期','时间','备注','金额','货币','支票号码','标签'];
@@ -3232,20 +3240,37 @@ else if(el.hasAttribute('data-filter-payee')){const val=el.dataset.filterPayee;f
 document.addEventListener('input',e=>{if(e.target.id==='txAccountSearchInput')renderTxAccountPicker();else if(e.target.id==='catSearch')renderCategoryPicker();else if(e.target.id==='accountSearchQ'){
   accountSearch=e.target.value;
   refreshAccountSearch()
-}else if(e.target.id==='reportPayeeSearch'){
+}
+else if(e.target.id==='reportPayeeSearch'){
   reportPayeeSearch=e.target.value;
-  const pos=e.target.selectionStart;
-  render();
-  const input=document.getElementById('reportPayeeSearch');
-  if(input){
-    input.focus();
-    input.setSelectionRange(pos,pos);
+  if(!e.isComposing){
+    const input = e.target;
+    const pos = input.selectionStart;
+    render();
+    const newInput = document.getElementById('reportPayeeSearch');
+    if(newInput){
+      newInput.focus();
+      newInput.setSelectionRange(pos,pos);
+    }
   }
-}else if(e.target.id==='searchQ'){
+}
+else if(e.target.id==='searchQ'){
   reportPayeeExact = '';
   filter.q=e.target.value;
   updateList()
 }else if(['advAmountValue','advDateStart','advDateEnd'].includes(e.target.id)){handleFilterChange(e)}else if(e.target.id==='txDesc'||e.target.id==='txPayee')showSuggestions(e.target);else if(e.target.id==='txAmount'||e.target.id==='txDiscount')updateDiscountPreview()});
+document.addEventListener('compositionend',e=>{
+  if(e.target.id==='reportPayeeSearch'){
+    reportPayeeSearch=e.target.value;
+    const pos=e.target.selectionStart;
+    render();
+    const input=document.getElementById('reportPayeeSearch');
+    if(input){
+      input.focus();
+      input.setSelectionRange(pos,pos);
+    }
+  }
+});
 document.addEventListener('change',e=>{
   if(e.target.hasAttribute('data-batch-tx')){
     const id=e.target.dataset.batchTx;
