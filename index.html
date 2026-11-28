@@ -391,7 +391,8 @@ function validate(obj){
     id:r.id, accountId:r.accountId, name:r.name.slice(0,160),
     cycle: isCycle ? 'monthly' : 'once',
     archived: !!r.archived,
-    startDate: isCycle ? '' : r.startDate,
+filterTag: String(r.filterTag||'').slice(0,50),
+startDate: isCycle ? '' : r.startDate,
     endDate: isCycle ? '' : r.endDate,
     startDay: Number(r.startDay)||1,
     endDay: Number(r.endDay)||31,
@@ -764,6 +765,8 @@ fees.forEach(f => {
 const progress = isNoAnnualFee ? 0 : calcFeeProgress(f);
 const days = isNoAnnualFee ? null : daysUntilFee(f);
 const period = isNoAnnualFee ? null : getFeePeriod(f);
+const canRecordProgress = ['amount','count'].includes(f.waiverType);
+const canMarkWaived = ['amount','count','points'].includes(f.waiverType);
       
       let progressHtml = '';
       
@@ -777,7 +780,7 @@ if (f.waiverType === 'amount') {
 
   progressHtml = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0;">
-      <span class="subtle" style="font-size:11px;font-variant-numeric:tabular-nums">已刷${fmt(progress, a.currency)}/${fmt(f.waiverTarget, a.currency)} ${f.useManual?'(手动)':''}</span>
+      <span class="subtle" style="font-size:11px;font-variant-numeric:tabular-nums">已刷${fmt(progress, a.currency)}/${fmt(f.waiverTarget, a.currency)} ${f.useManual?'（手动）':''}</span>
       ${status}
     </div>
     <div class="barTrack" style="height:6px">
@@ -819,9 +822,10 @@ if (f.waiverType === 'amount') {
         </div>
         ${!isNoAnnualFee ? `<div style="font-size:11px;color:#a0a9b7;margin-top:2px">结算区间：${period.startStr.slice(5)} ~ ${period.endStr.slice(5)}</div>` : ''}
         ${progressHtml}
-        ${!isNoAnnualFee ? `<div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:6px;margin-top:10px;">
-  <button class="btn tiny soft" style="padding:6px 0;font-size:12px" data-act="updateFeeProgress" data-id="${E(f.id)}">录入进度</button>
-  <button class="btn tiny soft" style="padding:6px 0;font-size:12px" data-act="payAnnualFee" data-id="${E(f.id)}">标记已免</button>
+        ${canRecordProgress || canMarkWaived ? `
+<div style="display:grid;grid-template-columns:repeat(${Number(canRecordProgress)+Number(canMarkWaived)}, 1fr);gap:6px;margin-top:10px;">
+  ${canRecordProgress ? `<button class="btn tiny soft" style="padding:6px 0;font-size:12px" data-act="updateFeeProgress" data-id="${E(f.id)}">录入进度</button>` : ''}
+  ${canMarkWaived ? `<button class="btn tiny soft" style="padding:6px 0;font-size:12px" data-act="payAnnualFee" data-id="${E(f.id)}">标记已免</button>` : ''}
 </div>` : ''}
             </div></div>`;
   });
@@ -923,6 +927,8 @@ const feeBlock = fees.map(f => {
 console.log('账户详情页年费类型：', f.name, f.waiverType, f);
   const days = daysUntilFee(f);
   const period = getFeePeriod(f);
+const canRecordProgress = ['amount','count'].includes(f.waiverType);
+const canMarkWaived = ['amount','count','points'].includes(f.waiverType);
   
   let progressHtml = '';
   if (f.waiverType === 'amount') {
@@ -974,19 +980,12 @@ console.log('账户详情页年费类型：', f.name, f.waiverType, f);
     </div>
     ${f.waiverType !== 'noAnnualFee' ? `<div style="font-size:11px;color:#a0a9b7;margin-top:2px">结算区间：${period.startStr.slice(5)} ~ ${period.endStr.slice(5)}</div>` : ''}
     ${progressHtml}
-        ${f.waiverType === 'noAnnualFee' ? `
-<div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:6px;margin-top:10px;">
+        <div style="display:grid;grid-template-columns:repeat(${2 + Number(canRecordProgress) + Number(canMarkWaived)}, 1fr);gap:6px;margin-top:10px;">
   <button class="btn tiny" style="padding:6px 0;font-size:12px" data-act="editAnnualFee" data-id="${E(f.id)}">编辑</button>
+  ${canRecordProgress ? `<button class="btn tiny" style="padding:6px 0;font-size:12px" data-act="updateFeeProgress" data-id="${E(f.id)}">录入进度</button>` : ''}
+  ${canMarkWaived ? `<button class="btn tiny" style="padding:6px 0;font-size:12px" data-act="payAnnualFee" data-id="${E(f.id)}">标记已免</button>` : ''}
   <button class="btn tiny warn" style="padding:6px 0;font-size:12px" data-act="deleteAnnualFee" data-id="${E(f.id)}">删除</button>
 </div>
-` : `
-<div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;margin-top:10px;">
-  <button class="btn tiny" style="padding:6px 0;font-size:12px" data-act="editAnnualFee" data-id="${E(f.id)}">编辑</button>
-  <button class="btn tiny" style="padding:6px 0;font-size:12px" data-act="updateFeeProgress" data-id="${E(f.id)}">录入进度</button>
-  <button class="btn tiny" style="padding:6px 0;font-size:12px" data-act="payAnnualFee" data-id="${E(f.id)}">标记已免</button>
-  <button class="btn tiny warn" style="padding:6px 0;font-size:12px" data-act="deleteAnnualFee" data-id="${E(f.id)}">删除</button>
-</div>
-`}
   </div>`;
 }).join('');
 
@@ -1598,6 +1597,7 @@ function getPeriodRange(rule, baseDate=new Date()){
 }
 
 function checkRewardHistory(){
+let historyChanged = false;
   if(!state.rewardHistory) state.rewardHistory=[];
   const todayStr=now();
   const todayDate=new Date();
@@ -1611,29 +1611,90 @@ function checkRewardHistory(){
         const period = getPeriodRange(rule, base);
         if(period.end >= todayStr) continue; 
         
-        const exists = state.rewardHistory.find(h=>h.ruleId===rule.id && h.start===period.start);
-        if(!exists){
-          const net = rewardNet({...rule, startDate: period.start, endDate: period.end});
-          if(net>0){
-            const achieved = rule.targets.filter(t=>net>=t.amount).map(t=>t.label);
-            state.rewardHistory.push({id:uid(), ruleId:rule.id, name:rule.name, start:period.start, end:period.end, net, achieved});
-          }
-        }
+        const net = rewardNet({...rule, startDate:period.start, endDate:period.end});
+const achieved = (rule.targets||[])
+  .filter(t=>net>=t.amount)
+  .map(t=>t.label);
+
+const exists = state.rewardHistory.find(
+  h=>h.ruleId===rule.id && h.start===period.start
+);
+
+if(exists){
+  const changed = exists.name!==rule.name ||
+    exists.end!==period.end ||
+    exists.net!==net ||
+    JSON.stringify(exists.achieved||[])!==JSON.stringify(achieved);
+
+  if(changed){
+    Object.assign(exists,{
+      name:rule.name,
+      start:period.start,
+      end:period.end,
+      net,
+      achieved
+    });
+    historyChanged = true;
+  }
+}else if(net>0){
+  state.rewardHistory.push({
+    id:uid(),
+    ruleId:rule.id,
+    name:rule.name,
+    start:period.start,
+    end:period.end,
+    net,
+    achieved
+  });
+  historyChanged = true;
+}
       }
     } else {
       if(rule.endDate < todayStr){
-        const exists = state.rewardHistory.find(h=>h.ruleId===rule.id);
-        if(!exists){
-          const net = rewardNet(rule);
-          if(net>0){
-            const achieved = rule.targets.filter(t=>net>=t.amount).map(t=>t.label);
-            state.rewardHistory.push({id:uid(), ruleId:rule.id, name:rule.name, start:rule.startDate, end:rule.endDate, net, achieved});
-          }
-        }
-      }
+  const net = rewardNet(rule);
+  const achieved = (rule.targets||[])
+    .filter(t=>net>=t.amount)
+    .map(t=>t.label);
+
+  const exists = state.rewardHistory.find(
+    h=>h.ruleId===rule.id
+  );
+
+  if(exists){
+    const changed = exists.name!==rule.name ||
+      exists.start!==rule.startDate ||
+      exists.end!==rule.endDate ||
+      exists.net!==net ||
+      JSON.stringify(exists.achieved||[])!==JSON.stringify(achieved);
+
+    if(changed){
+      Object.assign(exists,{
+        name:rule.name,
+        start:rule.startDate,
+        end:rule.endDate,
+        net,
+        achieved
+      });
+      historyChanged = true;
+    }
+  }else if(net>0){
+    state.rewardHistory.push({
+      id:uid(),
+      ruleId:rule.id,
+      name:rule.name,
+      start:rule.startDate,
+      end:rule.endDate,
+      net,
+      achieved
+    });
+    historyChanged = true;
+  }
+}
     }
   }
-}const v42RewardOldRender = renderAccountDetail;
+if(historyChanged) save().catch(()=>{});
+}
+const v42RewardOldRender = renderAccountDetail;
 renderAccountDetail = function(){
   checkRewardHistory();
   return v42RewardOldRender();
@@ -1987,15 +2048,66 @@ if(name==='payAnnualFee'){
 if(name==='updateFeeProgress'){
   const f = state.annualFees.find(x=>x.id===id);
   if(!f) return;
-  const val = prompt(`请输入「${f.name}」目前已刷的${f.waiverType==='amount'?'金额（元）':'笔数'}：`, f.waiverType==='amount'?(f.manualAmount/100).toFixed(2):f.manualAmount);
-  if(val===null) return;
-  const num = Number(val);
-  if(isNaN(num)||num<0) return alert('请输入有效数字');
-  f.manualAmount = f.waiverType==='amount' ? Math.round(num*100) : Math.floor(num);
+
+  const isAmount = f.waiverType === 'amount';
+  const returnToDashboard = $('modalTitle')?.textContent === '年费看板';
+  const currentValue = isAmount
+    ? (Number(f.manualAmount||0)/100).toFixed(2)
+    : String(Number(f.manualAmount)||0);
+
+  modal('录入年费刷免进度', `
+    <div class="notice blueTint" style="margin-bottom:14px">
+      录入后将按手动填写的数值统计刷免进度。
+    </div>
+    <form id="feeProgressForm">
+      <input type="hidden" name="returnToDashboard" value="${returnToDashboard?'1':'0'}">
+      <label class="inputLabel">${isAmount?'已刷金额（元）':'已刷笔数'}</label>
+      <input class="field" name="value" type="number"
+        min="0" step="${isAmount?'0.01':'1'}"
+        inputmode="${isAmount?'decimal':'numeric'}"
+        value="${E(currentValue)}"
+        placeholder="${isAmount?'请输入已刷金额':'请输入已刷笔数'}">
+      <p class="smallHint">请输入目前累计的${isAmount?'消费金额':'消费笔数'}，可以填写0。</p>
+    </form>
+  `, `
+    <button class="btn" data-act="closeModal">取消</button>
+    <button class="btn" data-act="saveFeeProgress" data-id="${E(f.id)}">保存</button>
+  `);
+  return;
+}
+if(name==='saveFeeProgress'){
+  const f = state.annualFees.find(x=>x.id===id);
+  const form = $('feeProgressForm');
+  if(!f || !form) return;
+
+  const data = new FormData(form);
+  const raw = String(data.get('value')||'').trim();
+  const num = Number(raw);
+
+  if(raw==='' || !Number.isFinite(num) || num<0){
+    t('请输入有效的非负数字');
+    return;
+  }
+
+  f.manualAmount = f.waiverType==='amount'
+    ? Math.round(num*100)
+    : Math.floor(num);
+
   f.useManual = true;
-  await save(); 
-  if($('modalTitle').textContent === '年费看板') { viewAllAnnualFees(); } else { render(); }
-  t('进度已更新'); return;
+
+  const returnToDashboard = data.get('returnToDashboard') === '1';
+
+  await save();
+  closeModal();
+
+  if(returnToDashboard){
+    viewAllAnnualFees();
+  }else{
+    render();
+  }
+
+  t('进度已更新');
+  return;
 }
 if(name==='saveAnnualFee'){
   const fEl = $('annualFeeForm');
